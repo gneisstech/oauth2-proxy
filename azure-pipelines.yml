@@ -12,14 +12,18 @@ pool:
 
 variables:
   imageName: 'cf-oauth-proxy-docker'
+  tag: 'connected-facilities'
 
 steps:
 - script: echo Hello, world!
   displayName: 'Run a one-line script'
 
 - task: Docker@2
-  displayName: Build an cf-oauth-proxy
+  displayName: Build and push cf-oauth-proxy
   inputs:
     repository: $(imageName)
-    command: build
+    command: buildAndPush
     Dockerfile: Dockerfile
+    containerRegistry: $(dockerRegistryServiceConnection)
+    tags: |
+      $(tag)
