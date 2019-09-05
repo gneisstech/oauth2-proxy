@@ -24,6 +24,6 @@ steps:
     repository: $(imageName)
     command: buildAndPush
     Dockerfile: Dockerfile
-    containerRegistry: $(ATGDEV01-Azure Container Registry)
+    containerRegistry: 'atgcfexpdev-service-connection'
     tags: |
       $(tag)
