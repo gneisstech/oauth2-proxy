@@ -4,7 +4,7 @@
 # https://aka.ms/yaml
 
 trigger:
-- master
+- master-bytelight
 - azure-pipelines
 
 pool:
@@ -24,6 +24,6 @@ steps:
     repository: $(imageName)
     command: buildAndPush
     Dockerfile: Dockerfile
-    containerRegistry: $(dockerRegistryServiceConnection)
+    containerRegistry: $(ATGDEV01-Azure Container Registry)
     tags: |
       $(tag)
