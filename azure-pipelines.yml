@@ -1,0 +1,29 @@
+# Starter pipeline
+# Start with a minimal pipeline that you can customize to build and deploy your code.
+# Add steps that build, run tests, deploy, and more:
+# https://aka.ms/yaml
+
+trigger:
+- master
+- azure-pipelines
+
+pool:
+  vmImage: 'ubuntu-latest'
+
+variables:
+  imageName: 'cf-oauth-proxy-docker'
+  tag: 'connected-facilities'
+
+steps:
+- script: echo Hello, world!
+  displayName: 'Run a one-line script'
+
+- task: Docker@2
+  displayName: Build and push cf-oauth-proxy
+  inputs:
+    repository: $(imageName)
+    command: buildAndPush
+    Dockerfile: Dockerfile
+    containerRegistry: $(dockerRegistryServiceConnection)
+    tags: |
+      $(tag)
