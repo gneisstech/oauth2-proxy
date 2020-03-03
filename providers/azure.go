@@ -98,7 +98,7 @@ func (p *AzureProvider) GetEmailAddress(s *sessions.SessionState) (string, error
 	}
 	if p.ProtectedResource != nil && p.ProtectedResource.String() != "" {
 		// profile URL and hence email is not implemented when a specific protected resource is requested
-		return "", errors.New("not implemented")
+		return "protected+resource@example.com", errors.New("not implemented")
 	}
 	req, err := http.NewRequest("GET", p.ProfileURL.String(), nil)
 	if err != nil {
