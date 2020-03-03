@@ -96,6 +96,10 @@ func (p *AzureProvider) GetEmailAddress(s *sessions.SessionState) (string, error
 	if s.AccessToken == "" {
 		return "", errors.New("missing access token")
 	}
+	if p.ProtectedResource != nil && p.ProtectedResource.String() != "" {
+		// consider if accesstoken.upn or unique_name is an email format, perhaps use that
+		return "", errors.New("email not needed for protected resource override")
+	}
 	req, err := http.NewRequest("GET", p.ProfileURL.String(), nil)
 	if err != nil {
 		return "", err
