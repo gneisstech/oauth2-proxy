@@ -12,6 +12,7 @@ import (
 
 	"github.com/pusher/oauth2_proxy/pkg/apis/sessions"
 	"github.com/pusher/oauth2_proxy/pkg/encryption"
+	"github.com/pusher/oauth2_proxy/pkg/logger"
 )
 
 // Redeem provides a default implementation of the OAuth2 token redemption process
