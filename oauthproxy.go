@@ -328,6 +328,9 @@ func (p *OAuthProxy) redeemCode(host, code string) (s *sessionsapi.SessionState,
 
 	if s.Email == "" {
 		s.Email, err = p.provider.GetEmailAddress(s)
+		if err != nil && err.Error() == "not implemented" {
+			err = nil
+		}
 	}
 
 	if s.User == "" {
