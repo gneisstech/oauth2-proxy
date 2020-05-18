@@ -24,6 +24,6 @@ steps:
     repository: $(imageName)
     command: buildAndPush
     Dockerfile: Dockerfile
-    containerRegistry: 'atgcfexpdev-service-connection'
+    containerRegistry: 'cf-dev-acr-service-connection'
     tags: |
       $(tag)

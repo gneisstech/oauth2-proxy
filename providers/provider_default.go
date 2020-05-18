@@ -12,6 +12,7 @@ import (
 
 	"github.com/pusher/oauth2_proxy/pkg/apis/sessions"
 	"github.com/pusher/oauth2_proxy/pkg/encryption"
+	"github.com/pusher/oauth2_proxy/pkg/logger"
 )
 
 // Redeem provides a default implementation of the OAuth2 token redemption process
@@ -29,10 +30,12 @@ func (p *ProviderData) Redeem(redirectURL, code string) (s *sessions.SessionStat
 	params.Add("grant_type", "authorization_code")
 	if p.ProtectedResource != nil && p.ProtectedResource.String() != "" {
 		params.Add("resource", p.ProtectedResource.String())
+		logger.Printf("  redeeming code for resource [%s]", p.ProtectedResource)
 	}
 
 	var req *http.Request
 	req, err = http.NewRequest("POST", p.RedeemURL.String(), bytes.NewBufferString(params.Encode()))
+	logger.Printf("  redeeming via URL [%s] with params [%s]", p.RedeemURL.String(), bytes.NewBufferString(params.Encode()))
 	if err != nil {
 		return
 	}
@@ -50,6 +53,7 @@ func (p *ProviderData) Redeem(redirectURL, code string) (s *sessions.SessionStat
 		return
 	}
 
+	logger.Printf("  redeem got %d from %q %s", resp.StatusCode, p.RedeemURL.String(), body)
 	if resp.StatusCode != 200 {
 		err = fmt.Errorf("got %d from %q %s", resp.StatusCode, p.RedeemURL.String(), body)
 		return
@@ -76,6 +80,7 @@ func (p *ProviderData) Redeem(redirectURL, code string) (s *sessions.SessionStat
 		s = &sessions.SessionState{AccessToken: a, CreatedAt: time.Now()}
 	} else {
 		err = fmt.Errorf("no access token found %s", body)
+		logger.Printf("  redeem got error %s", err)
 	}
 	return
 }
