@@ -1,6 +1,6 @@
 apiVersion: v2
 name: cf-oauth-proxy-docker
-description: Connected Facilities backend API services for self healing
+description: 'CF: AUTHN - OAuth2 proxy services'
 keywords:
   - 'connected-facilities'
   - 'cf-oauth-proxy-backend'
