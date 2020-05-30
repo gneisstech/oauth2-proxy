@@ -13,6 +13,15 @@ spec:
     metadata:
       labels:
         {{- include "cf-oauth-proxy-docker.selectorLabels" . | nindent 8 }}
+      {{- if ( or .Values.config.environment .Values.config.secrets ) }}
+      annotations:
+        {{- if .Values.config.environment }}
+        checksum/environment: {{ tpl (toYaml .Values.config.environment) . | sha256sum }}
+        {{- end }}
+        {{- if .Values.config.secrets }}
+        checksum/secrets: {{ tpl (toYaml .Values.config.secrets) . | sha256sum }}
+        {{- end }}
+      {{- end }}
     spec:
     {{- with .Values.imagePullSecrets }}
       imagePullSecrets:
