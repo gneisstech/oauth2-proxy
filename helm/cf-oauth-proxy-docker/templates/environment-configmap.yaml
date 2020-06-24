@@ -9,6 +9,8 @@ metadata:
     heritage: {{ .Release.Service }}
     release: {{ .Release.Name }}
   name: {{ template "cf-oauth-proxy-docker.fullname" . }}-env
+  annotations:
+    checksum/environment: {{ tpl (toYaml .Values.config.environment) . | sha256sum }}
 data:
 {{ tpl (toYaml .Values.config.environment) . | indent 2 }}
 {{- end }}
