@@ -21,11 +21,15 @@ func (p *ProviderData) Redeem(redirectURL, code string) (s *sessions.SessionStat
 		err = errors.New("missing code")
 		return
 	}
+	clientSecret, err := p.GetClientSecret()
+	if err != nil {
+		return
+	}
 
 	params := url.Values{}
 	params.Add("redirect_uri", redirectURL)
 	params.Add("client_id", p.ClientID)
-	params.Add("client_secret", p.ClientSecret)
+	params.Add("client_secret", clientSecret)
 	params.Add("code", code)
 	params.Add("grant_type", "authorization_code")
 	if p.ProtectedResource != nil && p.ProtectedResource.String() != "" {
@@ -91,7 +95,12 @@ func (p *ProviderData) GetLoginURL(redirectURI, state string) string {
 	a = *p.LoginURL
 	params, _ := url.ParseQuery(a.RawQuery)
 	params.Set("redirect_uri", redirectURI)
-	params.Set("approval_prompt", p.ApprovalPrompt)
+	params.Add("acr_values", p.AcrValues)
+	if p.Prompt != "" {
+		params.Set("prompt", p.Prompt)
+	} else { // Legacy variant of the prompt param:
+		params.Set("approval_prompt", p.ApprovalPrompt)
+	}
 	params.Add("scope", p.Scope)
 	params.Set("client_id", p.ClientID)
 	params.Set("response_type", "code")
@@ -117,6 +126,11 @@ func (p *ProviderData) GetEmailAddress(s *sessions.SessionState) (string, error)
 
 // GetUserName returns the Account username
 func (p *ProviderData) GetUserName(s *sessions.SessionState) (string, error) {
+	return "", errors.New("not implemented")
+}
+
+// GetPreferredUsername returns the Account preferred username
+func (p *ProviderData) GetPreferredUsername(s *sessions.SessionState) (string, error) {
 	return "", errors.New("not implemented")
 }
 

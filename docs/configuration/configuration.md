@@ -1,7 +1,7 @@
 ---
 layout: default
 title: Configuration
-permalink: /docs/configuration
+permalink: /configuration
 has_children: true
 nav_order: 3
 ---
@@ -10,9 +10,11 @@ nav_order: 3
 
 `oauth2_proxy` can be configured via [config file](#config-file), [command line options](#command-line-options) or [environment variables](#environment-variables).
 
-To generate a strong cookie secret use `python -c 'import os,base64; print base64.urlsafe_b64encode(os.urandom(16))'`
+To generate a strong cookie secret use `python -c 'import os,base64; print(base64.urlsafe_b64encode(os.urandom(16)).decode())'`
 
 ### Config File
+
+Every command line argument can be specified in a config file by replacing hypens (-) with underscores (\_). If the argument can be specified multiple times, the config option should be plural (trailing s).
 
 An example [oauth2_proxy.cfg]({{ site.gitweb }}/contrib/oauth2_proxy.cfg.example) config file is in the contrib directory. It can be used by specifying `-config=/etc/oauth2_proxy.cfg`
 
@@ -20,7 +22,7 @@ An example [oauth2_proxy.cfg]({{ site.gitweb }}/contrib/oauth2_proxy.cfg.example
 
 | Option | Type | Description | Default |
 | ------ | ---- | ----------- | ------- |
-| `-acr-values` | string | optional, used by login.gov | `"http://idmanagement.gov/ns/assurance/loa/1"` |
+| `-acr-values` | string | optional, see [docs](https://openid.net/specs/openid-connect-eap-acr-values-1_0.html#acrValues) | `""` |
 | `-approval-prompt` | string | OAuth approval_prompt | `"force"` |
 | `-auth-logging` | bool | Log authentication attempts | true |
 | `-auth-logging-format` | string | Template for authentication log lines | see [Logging Configuration](#logging-configuration) |
@@ -29,6 +31,7 @@ An example [oauth2_proxy.cfg]({{ site.gitweb }}/contrib/oauth2_proxy.cfg.example
 | `-basic-auth-password` | string | the password to set when passing the HTTP Basic Auth header | |
 | `-client-id` | string | the OAuth Client ID: ie: `"123456.apps.googleusercontent.com"` | |
 | `-client-secret` | string | the OAuth Client Secret | |
+| `-client-secret-file` | string | the file with OAuth Client Secret | |
 | `-config` | string | path to config file | |
 | `-cookie-domain` | string | an optional cookie domain to force cookies to (ie: `.yourcompany.com`) | |
 | `-cookie-expire` | duration | expire timeframe for cookie | 168h0m0s |
@@ -37,13 +40,15 @@ An example [oauth2_proxy.cfg]({{ site.gitweb }}/contrib/oauth2_proxy.cfg.example
 | `-cookie-path` | string | an optional cookie path to force cookies to (ie: `/poc/`) | `"/"` |
 | `-cookie-refresh` | duration | refresh the cookie after this duration; `0` to disable | |
 | `-cookie-secret` | string | the seed string for secure cookies (optionally base64 encoded) | |
-| `-cookie-secure` | bool | set secure (HTTPS) cookie flag | true |
+| `-cookie-secure` | bool | set [secure (HTTPS only) cookie flag](https://owasp.org/www-community/controls/SecureFlag) | true |
+| `-cookie-samesite` | string | set SameSite cookie attribute (ie: `"lax"`, `"strict"`, `"none"`, or `""`). | `""` |
 | `-custom-templates-dir` | string | path to custom html templates | |
 | `-display-htpasswd-form` | bool | display username / password login form if an htpasswd file is provided | true |
 | `-email-domain` | string | authenticate emails with the specified domain (may be given multiple times). Use `*` to authenticate any email | |
 | `-extra-jwt-issuers` | string | if `-skip-jwt-bearer-tokens` is set, a list of extra JWT `issuer=audience` pairs (where the issuer URL has a `.well-known/openid-configuration` or a `.well-known/jwks.json`) | |
 | `-exclude-logging-paths` | string | comma separated list of paths to exclude from logging, eg: `"/ping,/path2"` |`""` (no paths excluded) |
 | `-flush-interval` | duration | period between flushing response buffers when streaming responses | `"1s"` |
+| `-force-https` | bool | enforce https redirect | `false` |
 | `-banner` | string | custom banner string. Use `"-"` to disable default banner. | |
 | `-footer` | string | custom footer string. Use `"-"` to disable default footer. | |
 | `-gcp-healthchecks` | bool | will enable `/liveness_check`, `/readiness_check`, and `/` (with the proper user-agent) endpoints that will make it work well with GCP App Engine and GKE Ingresses | false |
@@ -70,27 +75,33 @@ An example [oauth2_proxy.cfg]({{ site.gitweb }}/contrib/oauth2_proxy.cfg.example
 | `-oidc-jwks-url` | string | OIDC JWKS URI for token verification; required if OIDC discovery is disabled | |
 | `-pass-access-token` | bool | pass OAuth access_token to upstream via X-Forwarded-Access-Token header | false |
 | `-pass-authorization-header` | bool | pass OIDC IDToken to upstream via Authorization Bearer header | false |
-| `-pass-basic-auth` | bool | pass HTTP Basic Auth, X-Forwarded-User and X-Forwarded-Email information to upstream | true |
+| `-pass-basic-auth` | bool | pass HTTP Basic Auth, X-Forwarded-User, X-Forwarded-Email and X-Forwarded-Preferred-Username information to upstream | true |
+| `-prefer-email-to-user` | bool | Prefer to use the Email address as the Username when passing information to upstream. Will only use Username if Email is unavailable, eg. htaccess authentication. Used in conjunction with `-pass-basic-auth` and `-pass-user-headers` | false |
 | `-pass-host-header` | bool | pass the request Host Header to upstream | true |
-| `-pass-user-headers` | bool | pass X-Forwarded-User and X-Forwarded-Email information to upstream | true |
+| `-pass-user-headers` | bool | pass X-Forwarded-User, X-Forwarded-Email and X-Forwarded-Preferred-Username information to upstream | true |
 | `-profile-url` | string | Profile access endpoint | |
+| `-prompt` | string | [OIDC prompt](https://openid.net/specs/openid-connect-core-1_0.html#AuthRequest); if present, `approval-prompt` is ignored | `""` |
 | `-provider` | string | OAuth provider | google |
+| `-provider-display-name` | string | Override the provider's name with the given string; used for the sign-in page | (depends on provider) |
 | `-ping-path` | string | the ping endpoint that can be used for basic health checks | `"/ping"` |
 | `-proxy-prefix` | string | the url root path that this proxy should be nested under (e.g. /`<oauth2>/sign_in`) | `"/oauth2"` |
 | `-proxy-websockets` | bool | enables WebSocket proxying | true |
 | `-pubjwk-url` | string | JWK pubkey access endpoint: required by login.gov | |
 | `-redeem-url` | string | Token redemption endpoint | |
 | `-redirect-url` | string | the OAuth Redirect URL. ie: `"https://internalapp.yourcompany.com/oauth2/callback"` | |
+| `-redis-cluster-connection-urls` | string \| list | List of Redis cluster connection URLs (eg redis://HOST[:PORT]). Used in conjunction with `--redis-use-cluster` | |
 | `-redis-connection-url` | string | URL of redis server for redis session storage (eg: `redis://HOST[:PORT]`) | |
 | `-redis-sentinel-master-name` | string | Redis sentinel master name. Used in conjunction with `--redis-use-sentinel` | |
 | `-redis-sentinel-connection-urls` | string \| list | List of Redis sentinel connection URLs (eg `redis://HOST[:PORT]`). Used in conjunction with `--redis-use-sentinel` | |
+| `-redis-use-cluster` | bool | Connect to redis cluster. Must set `--redis-cluster-connection-urls` to use this feature | false |
 | `-redis-use-sentinel` | bool | Connect to redis via sentinels. Must set `--redis-sentinel-master-name` and `--redis-sentinel-connection-urls` to use this feature | false |
 | `-request-logging` | bool | Log requests | true |
 | `-request-logging-format` | string | Template for request log lines | see [Logging Configuration](#logging-configuration) |
 | `-resource` | string | The resource that is protected (Azure AD only) | |
+| `-reverse-proxy` | bool | are we running behind a reverse proxy, controls whether headers like X-Real-Ip are accepted | false |
 | `-scope` | string | OAuth scope specification | |
-| `-session-store-type` | string | Session data storage backend | cookie |
-| `-set-xauthrequest` | bool | set X-Auth-Request-User and X-Auth-Request-Email response headers (useful in Nginx auth_request mode) | false |
+| `-session-store-type` | string | [Session data storage backend](configuration/sessions); redis or cookie | cookie |
+| `-set-xauthrequest` | bool | set X-Auth-Request-User, X-Auth-Request-Email and X-Auth-Request-Preferred-Username response headers (useful in Nginx auth_request mode) | false |
 | `-set-authorization-header` | bool | set Authorization Bearer response header (useful in Nginx auth_request mode) | false |
 | `-signature-key` | string | GAP-Signature request signature key (algorithm:secretkey) | |
 | `-silence-ping-logging` | bool | disable logging of requests to ping endpoint | false |
@@ -105,18 +116,18 @@ An example [oauth2_proxy.cfg]({{ site.gitweb }}/contrib/oauth2_proxy.cfg.example
 | `-standard-logging-format` | string | Template for standard log lines | see [Logging Configuration](#logging-configuration) |
 | `-tls-cert-file` | string | path to certificate file | |
 | `-tls-key-file` | string | path to private key file | |
-| `-upstream` | string \| list | the http url(s) of the upstream endpoint or `file://` paths for static files. Routing is based on the path | |
+| `-upstream` | string \| list | the http url(s) of the upstream endpoint, file:// paths for static files or `static://<status_code>` for static response. Routing is based on the path | |
 | `-validate-url` | string | Access token validation endpoint | |
 | `-version` | n/a | print version string | |
 | `-whitelist-domain` | string \| list | allowed domains for redirection after authentication. Prefix domain with a `.` to allow subdomains (eg `.example.com`) | |
 
-Note, when using the `whitelist-domain` option, any domain prefixed with a `.` will allow any subdomain of the specified domain as a valid redirect URL.
+Note: when using the `whitelist-domain` option, any domain prefixed with a `.` will allow any subdomain of the specified domain as a valid redirect URL. By default, only empty ports are allowed. This translates to allowing the default port of the URL's protocol (80 for HTTP, 443 for HTTPS, etc.) since browsers omit them. To allow only a specific port, add it to the whitelisted domain: `example.com:8080`. To allow any port, use `*`: `example.com:*`.
 
 See below for provider specific options
 
 ### Upstreams Configuration
 
-`oauth2_proxy` supports having multiple upstreams, and has the option to pass requests on to HTTP(S) servers or serve static files from the file system. HTTP and HTTPS upstreams are configured by providing a URL such as `http://127.0.0.1:8080/` for the upstream parameter, that will forward all authenticated requests to be forwarded to the upstream server. If you instead provide `http://127.0.0.1:8080/some/path/` then it will only be requests that start with `/some/path/` which are forwarded to the upstream.
+`oauth2_proxy` supports having multiple upstreams, and has the option to pass requests on to HTTP(S) servers or serve static files from the file system. HTTP and HTTPS upstreams are configured by providing a URL such as `http://127.0.0.1:8080/` for the upstream parameter, this will forward all authenticated requests to the upstream server. If you instead provide `http://127.0.0.1:8080/some/path/` then it will only be requests that start with `/some/path/` which are forwarded to the upstream.
 
 Static file paths are configured as a file:// URL. `file:///var/www/static/` will serve the files from that directory at `http://[oauth2_proxy url]/var/www/static/`, which may not be what you want. You can provide the path to where the files should be available by adding a fragment to the configured URL. The value of the fragment will then be used to specify which path the files are available at. `file:///var/www/static/#/static/` will ie. make `/var/www/static/` available at `http://[oauth2_proxy url]/static/`.
 
@@ -171,7 +182,7 @@ Available variables for auth logging:
 
 | Variable | Example | Description |
 | --- | --- | --- |
-| Client | 74.125.224.72 | The client/remote IP address. Will use the X-Real-IP header it if exists. |
+| Client | 74.125.224.72 | The client/remote IP address. Will use the X-Real-IP header it if exists & reverse-proxy is set to true. |
 | Host  | domain.com | The value of the Host header. |
 | Protocol | HTTP/1.0 | The request protocol. |
 | RequestMethod | GET | The request method. |
@@ -199,7 +210,7 @@ Available variables for request logging:
 
 | Variable | Example | Description |
 | --- | --- | --- |
-| Client | 74.125.224.72 | The client/remote IP address. Will use the X-Real-IP header it if exists. |
+| Client | 74.125.224.72 | The client/remote IP address. Will use the X-Real-IP header it if exists & reverse-proxy is set to true. |
 | Host  | domain.com | The value of the Host header. |
 | Protocol | HTTP/1.0 | The request protocol. |
 | RequestDuration | 0.001 | The time in seconds that a request took to process. |
@@ -249,6 +260,8 @@ server {
     proxy_set_header X-Real-IP               $remote_addr;
     proxy_set_header X-Scheme                $scheme;
     proxy_set_header X-Auth-Request-Redirect $request_uri;
+    # or, if you are handling multiple domains:
+    # proxy_set_header X-Auth-Request-Redirect $scheme://$host$request_uri;
   }
   location = /oauth2/auth {
     proxy_pass       http://127.0.0.1:4180;
@@ -308,7 +321,7 @@ If you use ingress-nginx in Kubernetes (which includes the Lua module), you also
 
 ```yaml
 nginx.ingress.kubernetes.io/auth-response-headers: Authorization
-nginx.ingress.kubernetes.io/auth-signin: https://$host/oauth2/start?rd=$request_uri
+nginx.ingress.kubernetes.io/auth-signin: https://$host/oauth2/start?rd=$escaped_request_uri
 nginx.ingress.kubernetes.io/auth-url: https://$host/oauth2/auth
 nginx.ingress.kubernetes.io/configuration-snippet: |
   auth_request_set $name_upstream_1 $upstream_cookie_name_1;
@@ -321,3 +334,6 @@ nginx.ingress.kubernetes.io/configuration-snippet: |
 ```
 
 You have to substitute *name* with the actual cookie name you configured via --cookie-name parameter. If you don't set a custom cookie name the variable  should be "$upstream_cookie__oauth2_proxy_1" instead of "$upstream_cookie_name_1" and the new cookie-name should be "_oauth2_proxy_1=" instead of "name_1=".
+
+### Note on rotated Client Secret
+If you set up your OAuth2 provider to rotate your client secret, you can use the `client-secret-file` option to reload the secret when it is updated.

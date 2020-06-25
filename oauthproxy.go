@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	b64 "encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"html/template"
@@ -12,12 +13,14 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/coreos/go-oidc"
 	"github.com/mbland/hmacauth"
 	sessionsapi "github.com/pusher/oauth2_proxy/pkg/apis/sessions"
+	"github.com/pusher/oauth2_proxy/pkg/cookies"
 	"github.com/pusher/oauth2_proxy/pkg/encryption"
 	"github.com/pusher/oauth2_proxy/pkg/logger"
 	"github.com/pusher/oauth2_proxy/providers"
@@ -45,6 +48,7 @@ var SignatureHeaders = []string{
 	"Authorization",
 	"X-Forwarded-User",
 	"X-Forwarded-Email",
+	"X-Forwarded-Preferred-User",
 	"X-Forwarded-Access-Token",
 	"Cookie",
 	"Gap-Auth",
@@ -53,6 +57,10 @@ var SignatureHeaders = []string{
 var (
 	// ErrNeedsLogin means the user should be redirected to the login page
 	ErrNeedsLogin = errors.New("redirect to login page")
+
+	// Used to check final redirects are not susceptible to open redirects.
+	// Matches //, /\ and both of these with whitespace in between (eg / / or / \).
+	invalidRedirectRegex = regexp.MustCompile(`^/(\s|\v)?(/|\\)`)
 )
 
 // OAuthProxy is the main authentication proxy
@@ -66,6 +74,7 @@ type OAuthProxy struct {
 	CookieHTTPOnly bool
 	CookieExpire   time.Duration
 	CookieRefresh  time.Duration
+	CookieSameSite string
 	Validator      func(string) bool
 
 	RobotsPath        string
@@ -75,32 +84,35 @@ type OAuthProxy struct {
 	OAuthStartPath    string
 	OAuthCallbackPath string
 	AuthOnlyPath      string
+	UserInfoPath      string
 
-	redirectURL         *url.URL // the url to receive requests at
-	whitelistDomains    []string
-	provider            providers.Provider
-	sessionStore        sessionsapi.SessionStore
-	ProxyPrefix         string
-	SignInMessage       string
-	HtpasswdFile        *HtpasswdFile
-	DisplayHtpasswdForm bool
-	serveMux            http.Handler
-	SetXAuthRequest     bool
-	PassBasicAuth       bool
-	SkipProviderButton  bool
-	PassUserHeaders     bool
-	BasicAuthPassword   string
-	PassAccessToken     bool
-	SetAuthorization    bool
-	PassAuthorization   bool
-	skipAuthRegex       []string
-	skipAuthPreflight   bool
-	skipJwtBearerTokens bool
-	jwtBearerVerifiers  []*oidc.IDTokenVerifier
-	compiledRegex       []*regexp.Regexp
-	templates           *template.Template
-	Banner              string
-	Footer              string
+	redirectURL          *url.URL // the url to receive requests at
+	whitelistDomains     []string
+	provider             providers.Provider
+	providerNameOverride string
+	sessionStore         sessionsapi.SessionStore
+	ProxyPrefix          string
+	SignInMessage        string
+	HtpasswdFile         *HtpasswdFile
+	DisplayHtpasswdForm  bool
+	serveMux             http.Handler
+	SetXAuthRequest      bool
+	PassBasicAuth        bool
+	SkipProviderButton   bool
+	PassUserHeaders      bool
+	BasicAuthPassword    string
+	PassAccessToken      bool
+	SetAuthorization     bool
+	PassAuthorization    bool
+	PreferEmailToUser    bool
+	skipAuthRegex        []string
+	skipAuthPreflight    bool
+	skipJwtBearerTokens  bool
+	jwtBearerVerifiers   []*oidc.IDTokenVerifier
+	compiledRegex        []*regexp.Regexp
+	templates            *template.Template
+	Banner               string
+	Footer               string
 }
 
 // UpstreamProxy represents an upstream server to proxy to
@@ -119,7 +131,7 @@ func (u *UpstreamProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		r.Header.Set("GAP-Auth", w.Header().Get("GAP-Auth"))
 		u.auth.SignRequest(r)
 	}
-	if u.wsHandler != nil && strings.ToLower(r.Header.Get("Connection")) == "upgrade" && r.Header.Get("Upgrade") == "websocket" {
+	if u.wsHandler != nil && strings.EqualFold(r.Header.Get("Connection"), "upgrade") && r.Header.Get("Upgrade") == "websocket" {
 		u.wsHandler.ServeHTTP(w, r)
 	} else {
 		u.handler.ServeHTTP(w, r)
@@ -191,7 +203,7 @@ func NewWebSocketOrRestReverseProxy(u *url.URL, opts *Options, auth hmacauth.Hma
 	}
 }
 
-// NewOAuthProxy creates a new instance of OOuthProxy from the options provided
+// NewOAuthProxy creates a new instance of OAuthProxy from the options provided
 func NewOAuthProxy(opts *Options, validator func(string) bool) *OAuthProxy {
 	serveMux := http.NewServeMux()
 	var auth hmacauth.HmacAuth
@@ -201,12 +213,23 @@ func NewOAuthProxy(opts *Options, validator func(string) bool) *OAuthProxy {
 	}
 	for _, u := range opts.proxyURLs {
 		path := u.Path
+		host := u.Host
 		switch u.Scheme {
 		case httpScheme, httpsScheme:
 			logger.Printf("mapping path %q => upstream %q", path, u)
 			proxy := NewWebSocketOrRestReverseProxy(u, opts, auth)
 			serveMux.Handle(path, proxy)
+		case "static":
+			responseCode, err := strconv.Atoi(host)
+			if err != nil {
+				logger.Printf("unable to convert %q to int, use default \"200\"", host)
+				responseCode = 200
+			}
 
+			serveMux.HandleFunc(path, func(rw http.ResponseWriter, req *http.Request) {
+				rw.WriteHeader(responseCode)
+				fmt.Fprintf(rw, "Authenticated")
+			})
 		case "file":
 			if u.Fragment != "" {
 				path = u.Fragment
@@ -245,7 +268,7 @@ func NewOAuthProxy(opts *Options, validator func(string) bool) *OAuthProxy {
 		refresh = fmt.Sprintf("after %s", opts.CookieRefresh)
 	}
 
-	logger.Printf("Cookie settings: name:%s secure(https):%v httponly:%v expiry:%s domain:%s path:%s refresh:%s", opts.CookieName, opts.CookieSecure, opts.CookieHTTPOnly, opts.CookieExpire, opts.CookieDomain, opts.CookiePath, refresh)
+	logger.Printf("Cookie settings: name:%s secure(https):%v httponly:%v expiry:%s domain:%s path:%s samesite:%s refresh:%s", opts.CookieName, opts.CookieSecure, opts.CookieHTTPOnly, opts.CookieExpire, opts.CookieDomain, opts.CookiePath, opts.CookieSameSite, refresh)
 
 	return &OAuthProxy{
 		CookieName:     opts.CookieName,
@@ -257,6 +280,7 @@ func NewOAuthProxy(opts *Options, validator func(string) bool) *OAuthProxy {
 		CookieHTTPOnly: opts.CookieHTTPOnly,
 		CookieExpire:   opts.CookieExpire,
 		CookieRefresh:  opts.CookieRefresh,
+		CookieSameSite: opts.CookieSameSite,
 		Validator:      validator,
 
 		RobotsPath:        "/robots.txt",
@@ -266,29 +290,32 @@ func NewOAuthProxy(opts *Options, validator func(string) bool) *OAuthProxy {
 		OAuthStartPath:    fmt.Sprintf("%s/start", opts.ProxyPrefix),
 		OAuthCallbackPath: fmt.Sprintf("%s/callback", opts.ProxyPrefix),
 		AuthOnlyPath:      fmt.Sprintf("%s/auth", opts.ProxyPrefix),
+		UserInfoPath:      fmt.Sprintf("%s/userinfo", opts.ProxyPrefix),
 
-		ProxyPrefix:         opts.ProxyPrefix,
-		provider:            opts.provider,
-		sessionStore:        opts.sessionStore,
-		serveMux:            serveMux,
-		redirectURL:         redirectURL,
-		whitelistDomains:    opts.WhitelistDomains,
-		skipAuthRegex:       opts.SkipAuthRegex,
-		skipAuthPreflight:   opts.SkipAuthPreflight,
-		skipJwtBearerTokens: opts.SkipJwtBearerTokens,
-		jwtBearerVerifiers:  opts.jwtBearerVerifiers,
-		compiledRegex:       opts.CompiledRegex,
-		SetXAuthRequest:     opts.SetXAuthRequest,
-		PassBasicAuth:       opts.PassBasicAuth,
-		PassUserHeaders:     opts.PassUserHeaders,
-		BasicAuthPassword:   opts.BasicAuthPassword,
-		PassAccessToken:     opts.PassAccessToken,
-		SetAuthorization:    opts.SetAuthorization,
-		PassAuthorization:   opts.PassAuthorization,
-		SkipProviderButton:  opts.SkipProviderButton,
-		templates:           loadTemplates(opts.CustomTemplatesDir),
-		Banner:              opts.Banner,
-		Footer:              opts.Footer,
+		ProxyPrefix:          opts.ProxyPrefix,
+		provider:             opts.provider,
+		providerNameOverride: opts.ProviderName,
+		sessionStore:         opts.sessionStore,
+		serveMux:             serveMux,
+		redirectURL:          redirectURL,
+		whitelistDomains:     opts.WhitelistDomains,
+		skipAuthRegex:        opts.SkipAuthRegex,
+		skipAuthPreflight:    opts.SkipAuthPreflight,
+		skipJwtBearerTokens:  opts.SkipJwtBearerTokens,
+		jwtBearerVerifiers:   opts.jwtBearerVerifiers,
+		compiledRegex:        opts.CompiledRegex,
+		SetXAuthRequest:      opts.SetXAuthRequest,
+		PassBasicAuth:        opts.PassBasicAuth,
+		PassUserHeaders:      opts.PassUserHeaders,
+		BasicAuthPassword:    opts.BasicAuthPassword,
+		PassAccessToken:      opts.PassAccessToken,
+		SetAuthorization:     opts.SetAuthorization,
+		PassAuthorization:    opts.PassAuthorization,
+		PreferEmailToUser:    opts.PreferEmailToUser,
+		SkipProviderButton:   opts.SkipProviderButton,
+		templates:            loadTemplates(opts.CustomTemplatesDir),
+		Banner:               opts.Banner,
+		Footer:               opts.Footer,
 	}
 }
 
@@ -333,6 +360,13 @@ func (p *OAuthProxy) redeemCode(host, code string) (s *sessionsapi.SessionState,
 		}
 	}
 
+	if s.PreferredUsername == "" {
+		s.PreferredUsername, err = p.provider.GetPreferredUsername(s)
+		if err != nil && err.Error() == "not implemented" {
+			err = nil
+		}
+	}
+
 	if s.User == "" {
 		s.User, err = p.provider.GetUserName(s)
 		if err != nil && err.Error() == "not implemented" {
@@ -366,6 +400,7 @@ func (p *OAuthProxy) makeCookie(req *http.Request, name string, value string, ex
 		HttpOnly: p.CookieHTTPOnly,
 		Secure:   p.CookieSecure,
 		Expires:  now.Add(expiration),
+		SameSite: cookies.ParseSameSite(p.CookieSameSite),
 	}
 }
 
@@ -428,12 +463,15 @@ func (p *OAuthProxy) SignInPage(rw http.ResponseWriter, req *http.Request, code 
 	p.ClearSessionCookie(rw, req)
 	rw.WriteHeader(code)
 
-	redirecURL := req.URL.RequestURI()
-	if req.Header.Get("X-Auth-Request-Redirect") != "" {
-		redirecURL = req.Header.Get("X-Auth-Request-Redirect")
+	redirectURL, err := p.GetRedirect(req)
+	if err != nil {
+		logger.Printf("Error obtaining redirect: %s", err.Error())
+		p.ErrorPage(rw, 500, "Internal Error", err.Error())
+		return
 	}
-	if redirecURL == p.SignInPath {
-		redirecURL = "/"
+
+	if redirectURL == p.SignInPath {
+		redirectURL = "/"
 	}
 
 	t := struct {
@@ -448,10 +486,13 @@ func (p *OAuthProxy) SignInPage(rw http.ResponseWriter, req *http.Request, code 
 		ProviderName:  p.provider.Data().ProviderName,
 		SignInMessage: p.SignInMessage,
 		CustomLogin:   p.displayCustomLoginForm(),
-		Redirect:      redirecURL,
+		Redirect:      redirectURL,
 		Version:       VERSION,
 		ProxyPrefix:   p.ProxyPrefix,
 		Footer:        template.HTML(p.Footer),
+	}
+	if p.providerNameOverride != "" {
+		t.ProviderName = p.providerNameOverride
 	}
 	p.templates.ExecuteTemplate(rw, "sign_in.html", t)
 }
@@ -483,7 +524,10 @@ func (p *OAuthProxy) GetRedirect(req *http.Request) (redirect string, err error)
 		return
 	}
 
-	redirect = req.Form.Get("rd")
+	redirect = req.Header.Get("X-Auth-Request-Redirect")
+	if req.Form.Get("rd") != "" {
+		redirect = req.Form.Get("rd")
+	}
 	if !p.IsValidRedirect(redirect) {
 		redirect = req.URL.Path
 		if strings.HasPrefix(redirect, p.ProxyPrefix) {
@@ -494,21 +538,75 @@ func (p *OAuthProxy) GetRedirect(req *http.Request) (redirect string, err error)
 	return
 }
 
+// splitHostPort separates host and port. If the port is not valid, it returns
+// the entire input as host, and it doesn't check the validity of the host.
+// Unlike net.SplitHostPort, but per RFC 3986, it requires ports to be numeric.
+// *** taken from net/url, modified validOptionalPort() to accept ":*"
+func splitHostPort(hostport string) (host, port string) {
+	host = hostport
+
+	colon := strings.LastIndexByte(host, ':')
+	if colon != -1 && validOptionalPort(host[colon:]) {
+		host, port = host[:colon], host[colon+1:]
+	}
+
+	if strings.HasPrefix(host, "[") && strings.HasSuffix(host, "]") {
+		host = host[1 : len(host)-1]
+	}
+
+	return
+}
+
+// validOptionalPort reports whether port is either an empty string
+// or matches /^:\d*$/
+// *** taken from net/url, modified to accept ":*"
+func validOptionalPort(port string) bool {
+	if port == "" || port == ":*" {
+		return true
+	}
+	if port[0] != ':' {
+		return false
+	}
+	for _, b := range port[1:] {
+		if b < '0' || b > '9' {
+			return false
+		}
+	}
+	return true
+}
+
 // IsValidRedirect checks whether the redirect URL is whitelisted
 func (p *OAuthProxy) IsValidRedirect(redirect string) bool {
 	switch {
-	case strings.HasPrefix(redirect, "/") && !strings.HasPrefix(redirect, "//"):
+	case strings.HasPrefix(redirect, "/") && !strings.HasPrefix(redirect, "//") && !invalidRedirectRegex.MatchString(redirect):
 		return true
 	case strings.HasPrefix(redirect, "http://") || strings.HasPrefix(redirect, "https://"):
 		redirectURL, err := url.Parse(redirect)
 		if err != nil {
 			return false
 		}
+		redirectHostname := redirectURL.Hostname()
+
 		for _, domain := range p.whitelistDomains {
-			if (redirectURL.Host == domain) || (strings.HasPrefix(domain, ".") && strings.HasSuffix(redirectURL.Host, domain)) {
-				return true
+			domainHostname, domainPort := splitHostPort(strings.TrimLeft(domain, "."))
+			if domainHostname == "" {
+				continue
+			}
+
+			if (redirectHostname == domainHostname) || (strings.HasPrefix(domain, ".") && strings.HasSuffix(redirectHostname, domainHostname)) {
+				// the domain names match, now validate the ports
+				// if the whitelisted domain's port is '*', allow all ports
+				// if the whitelisted domain contains a specific port, only allow that port
+				// if the whitelisted domain doesn't contain a port at all, only allow empty redirect ports ie http and https
+				redirectPort := redirectURL.Port()
+				if (domainPort == "*") ||
+					(domainPort == redirectPort) ||
+					(domainPort == "" && redirectPort == "") {
+					return true
+				}
 			}
 		}
+
 		return false
 	default:
 		return false
@@ -557,6 +655,8 @@ func (p *OAuthProxy) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 		p.OAuthCallback(rw, req)
 	case path == p.AuthOnlyPath:
 		p.AuthenticateOnly(rw, req)
+	case path == p.UserInfoPath:
+		p.UserInfo(rw, req)
 	default:
 		p.Proxy(rw, req)
 	}
@@ -585,10 +685,36 @@ func (p *OAuthProxy) SignIn(rw http.ResponseWriter, req *http.Request) {
 	}
 }
 
+//UserInfo endpoint outputs session email and preferred username in JSON format
+func (p *OAuthProxy) UserInfo(rw http.ResponseWriter, req *http.Request) {
+
+	session, err := p.getAuthenticatedSession(rw, req)
+	if err != nil {
+		http.Error(rw, http.StatusText(http.StatusUnauthorized), http.StatusUnauthorized)
+		return
+	}
+	userInfo := struct {
+		Email             string `json:"email"`
+		PreferredUsername string `json:"preferredUsername,omitempty"`
+	}{
+		Email:             session.Email,
+		PreferredUsername: session.PreferredUsername,
+	}
+	rw.Header().Set("Content-Type", "application/json")
+	rw.WriteHeader(http.StatusOK)
+	json.NewEncoder(rw).Encode(userInfo)
+}
+
 // SignOut sends a response to clear the authentication cookie
 func (p *OAuthProxy) SignOut(rw http.ResponseWriter, req *http.Request) {
+	redirect, err := p.GetRedirect(req)
+	if err != nil {
+		logger.Printf("Error obtaining redirect: %s", err.Error())
+		p.ErrorPage(rw, 500, "Internal Error", err.Error())
+		return
+	}
 	p.ClearSessionCookie(rw, req)
-	http.Redirect(rw, req, "/", 302)
+	http.Redirect(rw, req, redirect, 302)
 }
 
 // OAuthStart starts the OAuth2 authentication flow
@@ -781,13 +907,11 @@ func (p *OAuthProxy) getAuthenticatedSession(rw http.ResponseWriter, req *http.R
 		}
 	}
 
-	if session != nil && session.Email != "" {
-		if !p.Validator(session.Email) || !p.provider.ValidateGroup(session.Email) {
-			logger.Printf(session.Email, req, logger.AuthFailure, "Invalid authentication via session: removing session %s", session)
-			session = nil
-			saveSession = false
-			clearSession = true
-		}
+	if session != nil && session.Email != "" && !p.Validator(session.Email) {
+		logger.Printf(session.Email, req, logger.AuthFailure, "Invalid authentication via session: removing session %s", session)
+		session = nil
+		saveSession = false
+		clearSession = true
 	}
 
 	if saveSession && session != nil {
@@ -819,21 +943,43 @@ func (p *OAuthProxy) getAuthenticatedSession(rw http.ResponseWriter, req *http.R
 // addHeadersForProxying adds the appropriate headers the request / response for proxying
 func (p *OAuthProxy) addHeadersForProxying(rw http.ResponseWriter, req *http.Request, session *sessionsapi.SessionState) {
 	if p.PassBasicAuth {
-		req.SetBasicAuth(session.User, p.BasicAuthPassword)
-		req.Header["X-Forwarded-User"] = []string{session.User}
-		if session.Email != "" {
-			req.Header["X-Forwarded-Email"] = []string{session.Email}
-		} else {
+		if p.PreferEmailToUser && session.Email != "" {
+			req.SetBasicAuth(session.Email, p.BasicAuthPassword)
+			req.Header["X-Forwarded-User"] = []string{session.Email}
 			req.Header.Del("X-Forwarded-Email")
+		} else {
+			req.SetBasicAuth(session.User, p.BasicAuthPassword)
+			req.Header["X-Forwarded-User"] = []string{session.User}
+			if session.Email != "" {
+				req.Header["X-Forwarded-Email"] = []string{session.Email}
+			} else {
+				req.Header.Del("X-Forwarded-Email")
+			}
+		}
+		if session.PreferredUsername != "" {
+			req.Header["X-Forwarded-Preferred-Username"] = []string{session.PreferredUsername}
+		} else {
+			req.Header.Del("X-Forwarded-Preferred-Username")
 		}
 	}
 
 	if p.PassUserHeaders {
-		req.Header["X-Forwarded-User"] = []string{session.User}
-		if session.Email != "" {
-			req.Header["X-Forwarded-Email"] = []string{session.Email}
-		} else {
+		if p.PreferEmailToUser && session.Email != "" {
+			req.Header["X-Forwarded-User"] = []string{session.Email}
 			req.Header.Del("X-Forwarded-Email")
+		} else {
+			req.Header["X-Forwarded-User"] = []string{session.User}
+			if session.Email != "" {
+				req.Header["X-Forwarded-Email"] = []string{session.Email}
+			} else {
+				req.Header.Del("X-Forwarded-Email")
+			}
+		}
+
+		if session.PreferredUsername != "" {
+			req.Header["X-Forwarded-Preferred-Username"] = []string{session.PreferredUsername}
+		} else {
+			req.Header.Del("X-Forwarded-Preferred-Username")
 		}
 	}
 
@@ -843,6 +989,11 @@ func (p *OAuthProxy) addHeadersForProxying(rw http.ResponseWriter, req *http.Req
 			rw.Header().Set("X-Auth-Request-Email", session.Email)
 		} else {
 			rw.Header().Del("X-Auth-Request-Email")
+		}
+		if session.PreferredUsername != "" {
+			rw.Header().Set("X-Auth-Request-Preferred-Username", session.PreferredUsername)
+		} else {
+			rw.Header().Del("X-Auth-Request-Preferred-Username")
 		}
 
 		if p.PassAccessToken {
@@ -953,9 +1104,10 @@ func (p *OAuthProxy) GetJwtSession(req *http.Request) (*sessionsapi.SessionState
 		}
 
 		var claims struct {
-			Subject  string `json:"sub"`
-			Email    string `json:"email"`
-			Verified *bool  `json:"email_verified"`
+			Subject           string `json:"sub"`
+			Email             string `json:"email"`
+			Verified          *bool  `json:"email_verified"`
+			PreferredUsername string `json:"preferred_username"`
 		}
 
 		if err := bearerToken.Claims(&claims); err != nil {
@@ -971,12 +1123,13 @@ func (p *OAuthProxy) GetJwtSession(req *http.Request) (*sessionsapi.SessionState
 		}
 
 		session = &sessionsapi.SessionState{
-			AccessToken:  rawBearerToken,
-			IDToken:      rawBearerToken,
-			RefreshToken: "",
-			ExpiresOn:    bearerToken.Expiry,
-			Email:        claims.Email,
-			User:         claims.Email,
+			AccessToken:       rawBearerToken,
+			IDToken:           rawBearerToken,
+			RefreshToken:      "",
+			ExpiresOn:         bearerToken.Expiry,
+			Email:             claims.Email,
+			User:              claims.Email,
+			PreferredUsername: claims.PreferredUsername,
 		}
 		return session, nil
 	}

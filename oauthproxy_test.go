@@ -182,49 +182,213 @@ func TestIsValidRedirect(t *testing.T) {
 	opts.ClientSecret = "fgkdsgj"
 	opts.CookieSecret = "ljgiogbj"
 	// Should match domains that are exactly foo.bar and any subdomain of bar.foo
-	opts.WhitelistDomains = []string{"foo.bar", ".bar.foo"}
+	opts.WhitelistDomains = []string{
+		"foo.bar",
+		".bar.foo",
+		"port.bar:8080",
+		".sub.port.bar:8080",
+		"anyport.bar:*",
+		".sub.anyport.bar:*",
+	}
 	opts.Validate()
 
 	proxy := NewOAuthProxy(opts, func(string) bool { return true })
 
-	noRD := proxy.IsValidRedirect("")
-	assert.Equal(t, false, noRD)
+	testCases := []struct {
+		Desc, Redirect string
+		ExpectedResult bool
+	}{
+		{
+			Desc:           "noRD",
+			Redirect:       "",
+			ExpectedResult: false,
+		},
+		{
+			Desc:           "singleSlash",
+			Redirect:       "/redirect",
+			ExpectedResult: true,
+		},
+		{
+			Desc:           "doubleSlash",
+			Redirect:       "//redirect",
+			ExpectedResult: false,
+		},
+		{
+			Desc:           "validHTTP",
+			Redirect:       "http://foo.bar/redirect",
+			ExpectedResult: true,
+		},
+		{
+			Desc:           "validHTTPS",
+			Redirect:       "https://foo.bar/redirect",
+			ExpectedResult: true,
+		},
+		{
+			Desc:           "invalidHTTPSubdomain",
+			Redirect:       "http://baz.foo.bar/redirect",
+			ExpectedResult: false,
+		},
+		{
+			Desc:           "invalidHTTPSSubdomain",
+			Redirect:       "https://baz.foo.bar/redirect",
+			ExpectedResult: false,
+		},
+		{
+			Desc:           "validHTTPSubdomain",
+			Redirect:       "http://baz.bar.foo/redirect",
+			ExpectedResult: true,
+		},
+		{
+			Desc:           "validHTTPSSubdomain",
+			Redirect:       "https://baz.bar.foo/redirect",
+			ExpectedResult: true,
+		},
+		{
+			Desc:           "validHTTPDomain",
+			Redirect:       "http://bar.foo/redirect",
+			ExpectedResult: true,
+		},
+		{
+			Desc:           "invalidHTTP1",
+			Redirect:       "http://foo.bar.evil.corp/redirect",
+			ExpectedResult: false,
+		},
+		{
+			Desc:           "invalidHTTPS1",
+			Redirect:       "https://foo.bar.evil.corp/redirect",
+			ExpectedResult: false,
+		},
+		{
+			Desc:           "invalidHTTP2",
+			Redirect:       "http://evil.corp/redirect?rd=foo.bar",
+			ExpectedResult: false,
+		},
+		{
+			Desc:           "invalidHTTPS2",
+			Redirect:       "https://evil.corp/redirect?rd=foo.bar",
+			ExpectedResult: false,
+		},
+		{
+			Desc:           "invalidPort",
+			Redirect:       "https://evil.corp:3838/redirect",
+			ExpectedResult: false,
+		},
+		{
+			Desc:           "invalidEmptyPort",
+			Redirect:       "http://foo.bar:3838/redirect",
+			ExpectedResult: false,
+		},
+		{
+			Desc:           "invalidEmptyPortSubdomain",
+			Redirect:       "http://baz.bar.foo:3838/redirect",
+			ExpectedResult: false,
+		},
+		{
+			Desc:           "validSpecificPort",
+			Redirect:       "http://port.bar:8080/redirect",
+			ExpectedResult: true,
+		},
+		{
+			Desc:           "invalidSpecificPort",
+			Redirect:       "http://port.bar:3838/redirect",
+			ExpectedResult: false,
+		},
+		{
+			Desc:           "validSpecificPortSubdomain",
+			Redirect:       "http://foo.sub.port.bar:8080/redirect",
+			ExpectedResult: true,
+		},
+		{
+			Desc:           "invalidSpecificPortSubdomain",
+			Redirect:       "http://foo.sub.port.bar:3838/redirect",
+			ExpectedResult: false,
+		},
+		{
+			Desc:           "validAnyPort1",
+			Redirect:       "http://anyport.bar:8080/redirect",
+			ExpectedResult: true,
+		},
+		{
+			Desc:           "validAnyPort2",
+			Redirect:       "http://anyport.bar:8081/redirect",
+			ExpectedResult: true,
+		},
+		{
+			Desc:           "validAnyPortSubdomain1",
+			Redirect:       "http://a.sub.anyport.bar:8080/redirect",
+			ExpectedResult: true,
+		},
+		{
+			Desc:           "validAnyPortSubdomain2",
+			Redirect:       "http://a.sub.anyport.bar:8081/redirect",
+			ExpectedResult: true,
+		},
+		{
+			Desc:           "openRedirect1",
+			Redirect:       "/\\evil.com",
+			ExpectedResult: false,
+		},
+		{
+			Desc:           "openRedirectSpace1",
+			Redirect:       "/ /evil.com",
+			ExpectedResult: false,
+		},
+		{
+			Desc:           "openRedirectSpace2",
+			Redirect:       "/ \\evil.com",
+			ExpectedResult: false,
+		},
+		{
+			Desc:           "openRedirectTab1",
+			Redirect:       "/\t/evil.com",
+			ExpectedResult: false,
+		},
+		{
+			Desc:           "openRedirectTab2",
+			Redirect:       "/\t\\evil.com",
+			ExpectedResult: false,
+		},
+		{
+			Desc:           "openRedirectVerticalTab1",
+			Redirect:       "/\v/evil.com",
+			ExpectedResult: false,
+		},
+		{
+			Desc:           "openRedirectVerticalTab2",
+			Redirect:       "/\v\\evil.com",
+			ExpectedResult: false,
+		},
+		{
+			Desc:           "openRedirectNewLine1",
+			Redirect:       "/\n/evil.com",
+			ExpectedResult: false,
+		},
+		{
+			Desc:           "openRedirectNewLine2",
+			Redirect:       "/\n\\evil.com",
+			ExpectedResult: false,
+		},
+		{
+			Desc:           "openRedirectCarriageReturn1",
+			Redirect:       "/\r/evil.com",
+			ExpectedResult: false,
+		},
+		{
+			Desc:           "openRedirectCarriageReturn2",
+			Redirect:       "/\r\\evil.com",
+			ExpectedResult: false,
+		},
+	}
 
-	singleSlash := proxy.IsValidRedirect("/redirect")
-	assert.Equal(t, true, singleSlash)
+	for _, tc := range testCases {
+		t.Run(tc.Desc, func(t *testing.T) {
+			result := proxy.IsValidRedirect(tc.Redirect)
 
-	doubleSlash := proxy.IsValidRedirect("//redirect")
-	assert.Equal(t, false, doubleSlash)
-
-	validHTTP := proxy.IsValidRedirect("http://foo.bar/redirect")
-	assert.Equal(t, true, validHTTP)
-
-	validHTTPS := proxy.IsValidRedirect("https://foo.bar/redirect")
-	assert.Equal(t, true, validHTTPS)
-
-	invalidHTTPSubdomain := proxy.IsValidRedirect("http://baz.foo.bar/redirect")
-	assert.Equal(t, false, invalidHTTPSubdomain)
-
-	invalidHTTPSSubdomain := proxy.IsValidRedirect("https://baz.foo.bar/redirect")
-	assert.Equal(t, false, invalidHTTPSSubdomain)
-
-	validHTTPSubdomain := proxy.IsValidRedirect("http://baz.bar.foo/redirect")
-	assert.Equal(t, true, validHTTPSubdomain)
-
-	validHTTPSSubdomain := proxy.IsValidRedirect("https://baz.bar.foo/redirect")
-	assert.Equal(t, true, validHTTPSSubdomain)
-
-	invalidHTTP1 := proxy.IsValidRedirect("http://foo.bar.evil.corp/redirect")
-	assert.Equal(t, false, invalidHTTP1)
-
-	invalidHTTPS1 := proxy.IsValidRedirect("https://foo.bar.evil.corp/redirect")
-	assert.Equal(t, false, invalidHTTPS1)
-
-	invalidHTTP2 := proxy.IsValidRedirect("http://evil.corp/redirect?rd=foo.bar")
-	assert.Equal(t, false, invalidHTTP2)
-
-	invalidHTTPS2 := proxy.IsValidRedirect("https://evil.corp/redirect?rd=foo.bar")
-	assert.Equal(t, false, invalidHTTPS2)
+			if result != tc.ExpectedResult {
+				t.Errorf("expected %t got %t", tc.ExpectedResult, result)
+			}
+		})
+	}
 }
 
 type TestProvider struct {
@@ -270,13 +434,6 @@ func (tp *TestProvider) ValidateSessionState(session *sessions.SessionState) boo
 	return tp.ValidToken
 }
 
-func (tp *TestProvider) ValidateGroup(email string) bool {
-	if tp.GroupValidator != nil {
-		return tp.GroupValidator(email)
-	}
-	return true
-}
-
 func TestBasicAuthPassword(t *testing.T) {
 	providerServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		logger.Printf("%#v", r)
@@ -303,6 +460,7 @@ func TestBasicAuthPassword(t *testing.T) {
 	opts.CookieSecure = false
 	opts.PassBasicAuth = true
 	opts.PassUserHeaders = true
+	opts.PreferEmailToUser = true
 	opts.BasicAuthPassword = "This is a secure password"
 	opts.Validate()
 
@@ -357,6 +515,91 @@ func TestBasicAuthPassword(t *testing.T) {
 	providerServer.Close()
 }
 
+func TestBasicAuthWithEmail(t *testing.T) {
+	opts := NewOptions()
+	opts.PassBasicAuth = true
+	opts.PassUserHeaders = false
+	opts.PreferEmailToUser = false
+	opts.BasicAuthPassword = "This is a secure password"
+	opts.Validate()
+
+	const emailAddress = "john.doe@example.com"
+	const userName = "9fcab5c9b889a557"
+
+	// The username in the basic auth credentials is expected to be equal to the email address from the
+	expectedEmailHeader := "Basic " + base64.StdEncoding.EncodeToString([]byte(emailAddress+":"+opts.BasicAuthPassword))
+	expectedUserHeader := "Basic " + base64.StdEncoding.EncodeToString([]byte(userName+":"+opts.BasicAuthPassword))
+
+	session := &sessions.SessionState{
+		User:        userName,
+		Email:       emailAddress,
+		AccessToken: "oauth_token",
+		CreatedAt:   time.Now(),
+	}
+	{
+		rw := httptest.NewRecorder()
+		req, _ := http.NewRequest("GET", opts.ProxyPrefix+"/testCase0", nil)
+		proxy := NewOAuthProxy(opts, func(email string) bool {
+			return email == emailAddress
+		})
+		proxy.addHeadersForProxying(rw, req, session)
+		assert.Equal(t, expectedUserHeader, req.Header["Authorization"][0])
+		assert.Equal(t, userName, req.Header["X-Forwarded-User"][0])
+	}
+
+	opts.PreferEmailToUser = true
+	{
+		rw := httptest.NewRecorder()
+		req, _ := http.NewRequest("GET", opts.ProxyPrefix+"/testCase1", nil)
+
+		proxy := NewOAuthProxy(opts, func(email string) bool {
+			return email == emailAddress
+		})
+		proxy.addHeadersForProxying(rw, req, session)
+		assert.Equal(t, expectedEmailHeader, req.Header["Authorization"][0])
+		assert.Equal(t, emailAddress, req.Header["X-Forwarded-User"][0])
+	}
+}
+
+func TestPassUserHeadersWithEmail(t *testing.T) {
+	opts := NewOptions()
+	opts.PassBasicAuth = false
+	opts.PassUserHeaders = true
+	opts.PreferEmailToUser = false
+	opts.Validate()
+
+	const emailAddress = "john.doe@example.com"
+	const userName = "9fcab5c9b889a557"
+
+	session := &sessions.SessionState{
+		User:        userName,
+		Email:       emailAddress,
+		AccessToken: "oauth_token",
+		CreatedAt:   time.Now(),
+	}
+	{
+		rw := httptest.NewRecorder()
+		req, _ := http.NewRequest("GET", opts.ProxyPrefix+"/testCase0", nil)
+		proxy := NewOAuthProxy(opts, func(email string) bool {
+			return email == emailAddress
+		})
+		proxy.addHeadersForProxying(rw, req, session)
+		assert.Equal(t, userName, req.Header["X-Forwarded-User"][0])
+	}
+
+	opts.PreferEmailToUser = true
+	{
+		rw := httptest.NewRecorder()
+		req, _ := http.NewRequest("GET", opts.ProxyPrefix+"/testCase1", nil)
+
+		proxy := NewOAuthProxy(opts, func(email string) bool {
+			return email == emailAddress
+		})
+		proxy.addHeadersForProxying(rw, req, session)
+		assert.Equal(t, emailAddress, req.Header["X-Forwarded-User"][0])
+	}
+}
+
 type PassAccessTokenTest struct {
 	providerServer *httptest.Server
 	proxy          *OAuthProxy
@@ -365,6 +608,7 @@ type PassAccessTokenTest struct {
 
 type PassAccessTokenTestOptions struct {
 	PassAccessToken bool
+	ProxyUpstream   string
 }
 
 func NewPassAccessTokenTest(opts PassAccessTokenTestOptions) *PassAccessTokenTest {
@@ -372,7 +616,6 @@ func NewPassAccessTokenTest(opts PassAccessTokenTestOptions) *PassAccessTokenTes
 
 	t.providerServer = httptest.NewServer(
 		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			logger.Printf("%#v", r)
 			var payload string
 			switch r.URL.Path {
 			case "/oauth/token":
@@ -389,6 +632,9 @@ func NewPassAccessTokenTest(opts PassAccessTokenTestOptions) *PassAccessTokenTes
 
 	t.opts = NewOptions()
 	t.opts.Upstreams = append(t.opts.Upstreams, t.providerServer.URL)
+	if opts.ProxyUpstream != "" {
+		t.opts.Upstreams = append(t.opts.Upstreams, opts.ProxyUpstream)
+	}
 	// The CookieSecret must be 32 bytes in order to create the AES
 	// cipher.
 	t.opts.CookieSecret = "xyzzyplughxyzzyplughxyzzyplughxp"
@@ -425,7 +671,9 @@ func (patTest *PassAccessTokenTest) getCallbackEndpoint() (httpCode int,
 	return rw.Code, rw.HeaderMap["Set-Cookie"][1]
 }
 
-func (patTest *PassAccessTokenTest) getRootEndpoint(cookie string) (httpCode int, accessToken string) {
+// getEndpointWithCookie makes a requests againt the oauthproxy with passed requestPath
+// and cookie and returns body and status code.
+func (patTest *PassAccessTokenTest) getEndpointWithCookie(cookie string, endpoint string) (httpCode int, accessToken string) {
 	cookieName := patTest.proxy.CookieName
 	var value string
 	keyPrefix := cookieName + "="
@@ -442,7 +690,7 @@ func (patTest *PassAccessTokenTest) getRootEndpoint(cookie string) (httpCode int
 		return 0, ""
 	}
 
-	req, err := http.NewRequest("GET", "/", strings.NewReader(""))
+	req, err := http.NewRequest("GET", endpoint, strings.NewReader(""))
 	if err != nil {
 		return 0, ""
 	}
@@ -475,11 +723,35 @@ func TestForwardAccessTokenUpstream(t *testing.T) {
 	// Now we make a regular request; the access_token from the cookie is
 	// forwarded as the "X-Forwarded-Access-Token" header. The token is
 	// read by the test provider server and written in the response body.
-	code, payload := patTest.getRootEndpoint(cookie)
+	code, payload := patTest.getEndpointWithCookie(cookie, "/")
 	if code != 200 {
 		t.Fatalf("expected 200; got %d", code)
 	}
 	assert.Equal(t, "my_auth_token", payload)
+}
+
+func TestStaticProxyUpstream(t *testing.T) {
+	patTest := NewPassAccessTokenTest(PassAccessTokenTestOptions{
+		PassAccessToken: true,
+		ProxyUpstream:   "static://200/static-proxy",
+	})
+
+	defer patTest.Close()
+
+	// A successful validation will redirect and set the auth cookie.
+	code, cookie := patTest.getCallbackEndpoint()
+	if code != 302 {
+		t.Fatalf("expected 302; got %d", code)
+	}
+	assert.NotEqual(t, nil, cookie)
+
+	// Now we make a regular request againts the upstream proxy; And validate
+	// the returned status code through the static proxy.
+	code, payload := patTest.getEndpointWithCookie(cookie, "/static-proxy")
+	if code != 200 {
+		t.Fatalf("expected 200; got %d", code)
+	}
+	assert.Equal(t, "Authenticated", payload)
 }
 
 func TestDoNotForwardAccessTokenUpstream(t *testing.T) {
@@ -497,7 +769,7 @@ func TestDoNotForwardAccessTokenUpstream(t *testing.T) {
 
 	// Now we make a regular request, but the access token header should
 	// not be present.
-	code, payload := patTest.getRootEndpoint(cookie)
+	code, payload := patTest.getEndpointWithCookie(cookie, "/")
 	if code != 200 {
 		t.Fatalf("expected 200; got %d", code)
 	}
@@ -746,6 +1018,32 @@ func TestProcessCookieFailIfRefreshSetAndCookieExpired(t *testing.T) {
 	}
 }
 
+func NewUserInfoEndpointTest() *ProcessCookieTest {
+	pcTest := NewProcessCookieTestWithDefaults()
+	pcTest.req, _ = http.NewRequest("GET",
+		pcTest.opts.ProxyPrefix+"/userinfo", nil)
+	return pcTest
+}
+
+func TestUserInfoEndpointAccepted(t *testing.T) {
+	test := NewUserInfoEndpointTest()
+	startSession := &sessions.SessionState{
+		Email: "john.doe@example.com", AccessToken: "my_access_token"}
+	test.SaveSession(startSession)
+
+	test.proxy.ServeHTTP(test.rw, test.req)
+	assert.Equal(t, http.StatusOK, test.rw.Code)
+	bodyBytes, _ := ioutil.ReadAll(test.rw.Body)
+	assert.Equal(t, "{\"email\":\"john.doe@example.com\"}\n", string(bodyBytes))
+}
+
+func TestUserInfoEndpointUnauthorizedOnNoCookieSetError(t *testing.T) {
+	test := NewUserInfoEndpointTest()
+
+	test.proxy.ServeHTTP(test.rw, test.req)
+	assert.Equal(t, http.StatusUnauthorized, test.rw.Code)
+}
+
 func NewAuthOnlyEndpointTest(modifiers ...OptionsModifier) *ProcessCookieTest {
 	pcTest := NewProcessCookieTestWithOptionsModifiers(modifiers...)
 	pcTest.req, _ = http.NewRequest("GET",
@@ -796,25 +1094,6 @@ func TestAuthOnlyEndpointUnauthorizedOnEmailValidationFailure(t *testing.T) {
 	test.SaveSession(startSession)
 	test.validateUser = false
 
-	test.proxy.ServeHTTP(test.rw, test.req)
-	assert.Equal(t, http.StatusUnauthorized, test.rw.Code)
-	bodyBytes, _ := ioutil.ReadAll(test.rw.Body)
-	assert.Equal(t, "unauthorized request\n", string(bodyBytes))
-}
-
-func TestAuthOnlyEndpointUnauthorizedOnProviderGroupValidationFailure(t *testing.T) {
-	test := NewAuthOnlyEndpointTest()
-	startSession := &sessions.SessionState{
-		Email: "michael.bland@gsa.gov", AccessToken: "my_access_token", CreatedAt: time.Now()}
-	test.SaveSession(startSession)
-	provider := &TestProvider{
-		ValidToken: true,
-		GroupValidator: func(s string) bool {
-			return false
-		},
-	}
-
-	test.proxy.provider = provider
 	test.proxy.ServeHTTP(test.rw, test.req)
 	assert.Equal(t, http.StatusUnauthorized, test.rw.Code)
 	bodyBytes, _ := ioutil.ReadAll(test.rw.Body)
@@ -1237,41 +1516,6 @@ func TestGetJwtSession(t *testing.T) {
 	assert.Equal(t, test.rw.Header().Get("Authorization"), authHeader)
 	assert.Equal(t, test.rw.Header().Get("X-Auth-Request-User"), "john@example.com")
 	assert.Equal(t, test.rw.Header().Get("X-Auth-Request-Email"), "john@example.com")
-}
-
-func TestJwtUnauthorizedOnGroupValidationFailure(t *testing.T) {
-	goodJwt := "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9." +
-		"eyJzdWIiOiIxMjM0NTY3ODkwIiwiYXVkIjoiaHR0cHM6Ly90ZXN0Lm15YXBwLmNvbSIsIm5hbWUiOiJKb2huIERvZSIsImVtY" +
-		"WlsIjoiam9obkBleGFtcGxlLmNvbSIsImlzcyI6Imh0dHBzOi8vaXNzdWVyLmV4YW1wbGUuY29tIiwiaWF0IjoxNTUzNjkxMj" +
-		"E1LCJleHAiOjE5MTIxNTE4MjF9." +
-		"rLVyzOnEldUq_pNkfa-WiV8TVJYWyZCaM2Am_uo8FGg11zD7l-qmz3x1seTvqpH6Y0Ty00fmv6dJnGnC8WMnPXQiodRTfhBSe" +
-		"OKZMu0HkMD2sg52zlKkbfLTO6ic5VnbVgwjjrB8am_Ta6w7kyFUaB5C1BsIrrLMldkWEhynbb8"
-
-	keyset := NoOpKeySet{}
-	verifier := oidc.NewVerifier("https://issuer.example.com", keyset,
-		&oidc.Config{ClientID: "https://test.myapp.com", SkipExpiryCheck: true})
-
-	test := NewAuthOnlyEndpointTest(func(opts *Options) {
-		opts.PassAuthorization = true
-		opts.SetAuthorization = true
-		opts.SetXAuthRequest = true
-		opts.SkipJwtBearerTokens = true
-		opts.jwtBearerVerifiers = append(opts.jwtBearerVerifiers, verifier)
-	})
-	tp, _ := test.proxy.provider.(*TestProvider)
-	// Verify ValidateGroup fails JWT authorization
-	tp.GroupValidator = func(s string) bool {
-		return false
-	}
-
-	authHeader := fmt.Sprintf("Bearer %s", goodJwt)
-	test.req.Header = map[string][]string{
-		"Authorization": {authHeader},
-	}
-	test.proxy.ServeHTTP(test.rw, test.req)
-	if test.rw.Code != http.StatusUnauthorized {
-		t.Fatalf("expected 401 got %d", test.rw.Code)
-	}
 }
 
 func TestFindJwtBearerToken(t *testing.T) {

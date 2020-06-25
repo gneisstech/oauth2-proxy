@@ -32,7 +32,7 @@ func testGitHubBackend(payload []string) *httptest.Server {
 	pathToQueryMap := map[string][]string{
 		"/user":        {""},
 		"/user/emails": {""},
-		"/user/orgs":   {"limit=200&page=1", "limit=200&page=2", "limit=200&page=3"},
+		"/user/orgs":   {"page=1&per_page=100", "page=2&per_page=100", "page=3&per_page=100"},
 	}
 
 	return httptest.NewServer(http.HandlerFunc(
@@ -104,7 +104,7 @@ func TestGitHubProviderGetEmailAddress(t *testing.T) {
 	bURL, _ := url.Parse(b.URL)
 	p := testGitHubProvider(bURL.Host)
 
-	session := &sessions.SessionState{AccessToken: "imaginary_access_token"}
+	session := CreateAuthorizedSession()
 	email, err := p.GetEmailAddress(session)
 	assert.Equal(t, nil, err)
 	assert.Equal(t, "michael.bland@gsa.gov", email)
@@ -117,7 +117,7 @@ func TestGitHubProviderGetEmailAddressNotVerified(t *testing.T) {
 	bURL, _ := url.Parse(b.URL)
 	p := testGitHubProvider(bURL.Host)
 
-	session := &sessions.SessionState{AccessToken: "imaginary_access_token"}
+	session := CreateAuthorizedSession()
 	email, err := p.GetEmailAddress(session)
 	assert.Equal(t, nil, err)
 	assert.Empty(t, "", email)
@@ -135,7 +135,7 @@ func TestGitHubProviderGetEmailAddressWithOrg(t *testing.T) {
 	p := testGitHubProvider(bURL.Host)
 	p.Org = "testorg1"
 
-	session := &sessions.SessionState{AccessToken: "imaginary_access_token"}
+	session := CreateAuthorizedSession()
 	email, err := p.GetEmailAddress(session)
 	assert.Equal(t, nil, err)
 	assert.Equal(t, "michael.bland@gsa.gov", email)
@@ -166,7 +166,7 @@ func TestGitHubProviderGetEmailAddressEmailNotPresentInPayload(t *testing.T) {
 	bURL, _ := url.Parse(b.URL)
 	p := testGitHubProvider(bURL.Host)
 
-	session := &sessions.SessionState{AccessToken: "imaginary_access_token"}
+	session := CreateAuthorizedSession()
 	email, err := p.GetEmailAddress(session)
 	assert.NotEqual(t, nil, err)
 	assert.Equal(t, "", email)
@@ -179,7 +179,7 @@ func TestGitHubProviderGetUserName(t *testing.T) {
 	bURL, _ := url.Parse(b.URL)
 	p := testGitHubProvider(bURL.Host)
 
-	session := &sessions.SessionState{AccessToken: "imaginary_access_token"}
+	session := CreateAuthorizedSession()
 	email, err := p.GetUserName(session)
 	assert.Equal(t, nil, err)
 	assert.Equal(t, "mbland", email)
