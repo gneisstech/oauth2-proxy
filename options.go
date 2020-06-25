@@ -29,18 +29,22 @@ import (
 // Options holds Configuration Options that can be set by Command Line Flag,
 // or Config File
 type Options struct {
-	ProxyPrefix     string `flag:"proxy-prefix" cfg:"proxy_prefix" env:"OAUTH2_PROXY_PROXY_PREFIX"`
-	PingPath        string `flag:"ping-path" cfg:"ping_path" env:"OAUTH2_PROXY_PING_PATH"`
-	ProxyWebSockets bool   `flag:"proxy-websockets" cfg:"proxy_websockets" env:"OAUTH2_PROXY_PROXY_WEBSOCKETS"`
-	HTTPAddress     string `flag:"http-address" cfg:"http_address" env:"OAUTH2_PROXY_HTTP_ADDRESS"`
-	HTTPSAddress    string `flag:"https-address" cfg:"https_address" env:"OAUTH2_PROXY_HTTPS_ADDRESS"`
-	RedirectURL     string `flag:"redirect-url" cfg:"redirect_url" env:"OAUTH2_PROXY_REDIRECT_URL"`
-	ClientID        string `flag:"client-id" cfg:"client_id" env:"OAUTH2_PROXY_CLIENT_ID"`
-	ClientSecret    string `flag:"client-secret" cfg:"client_secret" env:"OAUTH2_PROXY_CLIENT_SECRET"`
-	TLSCertFile     string `flag:"tls-cert-file" cfg:"tls_cert_file" env:"OAUTH2_PROXY_TLS_CERT_FILE"`
-	TLSKeyFile      string `flag:"tls-key-file" cfg:"tls_key_file" env:"OAUTH2_PROXY_TLS_KEY_FILE"`
+	ProxyPrefix      string `flag:"proxy-prefix" cfg:"proxy_prefix" env:"OAUTH2_PROXY_PROXY_PREFIX"`
+	PingPath         string `flag:"ping-path" cfg:"ping_path" env:"OAUTH2_PROXY_PING_PATH"`
+	ProxyWebSockets  bool   `flag:"proxy-websockets" cfg:"proxy_websockets" env:"OAUTH2_PROXY_PROXY_WEBSOCKETS"`
+	HTTPAddress      string `flag:"http-address" cfg:"http_address" env:"OAUTH2_PROXY_HTTP_ADDRESS"`
+	HTTPSAddress     string `flag:"https-address" cfg:"https_address" env:"OAUTH2_PROXY_HTTPS_ADDRESS"`
+	ReverseProxy     bool   `flag:"reverse-proxy" cfg:"reverse_proxy" env:"OAUTH2_PROXY_REVERSE_PROXY"`
+	ForceHTTPS       bool   `flag:"force-https" cfg:"force_https" env:"OAUTH2_PROXY_FORCE_HTTPS"`
+	RedirectURL      string `flag:"redirect-url" cfg:"redirect_url" env:"OAUTH2_PROXY_REDIRECT_URL"`
+	ClientID         string `flag:"client-id" cfg:"client_id" env:"OAUTH2_PROXY_CLIENT_ID"`
+	ClientSecret     string `flag:"client-secret" cfg:"client_secret" env:"OAUTH2_PROXY_CLIENT_SECRET"`
+	ClientSecretFile string `flag:"client-secret-file" cfg:"client_secret_file" env:"OAUTH2_PROXY_CLIENT_SECRET_FILE"`
+	TLSCertFile      string `flag:"tls-cert-file" cfg:"tls_cert_file" env:"OAUTH2_PROXY_TLS_CERT_FILE"`
+	TLSKeyFile       string `flag:"tls-key-file" cfg:"tls_key_file" env:"OAUTH2_PROXY_TLS_KEY_FILE"`
 
 	AuthenticatedEmailsFile  string   `flag:"authenticated-emails-file" cfg:"authenticated_emails_file" env:"OAUTH2_PROXY_AUTHENTICATED_EMAILS_FILE"`
+	KeycloakGroup            string   `flag:"keycloak-group" cfg:"keycloak_group" env:"OAUTH2_PROXY_KEYCLOAK_GROUP"`
 	AzureTenant              string   `flag:"azure-tenant" cfg:"azure_tenant" env:"OAUTH2_PROXY_AZURE_TENANT"`
 	BitbucketTeam            string   `flag:"bitbucket-team" cfg:"bitbucket_team" env:"OAUTH2_PROXY_BITBUCKET_TEAM"`
 	BitbucketRepository      string   `flag:"bitbucket-repository" cfg:"bitbucket_repository" env:"OAUTH2_PROXY_BITBUCKET_REPOSITORY"`
@@ -69,6 +73,7 @@ type Options struct {
 	SkipJwtBearerTokens           bool          `flag:"skip-jwt-bearer-tokens" cfg:"skip_jwt_bearer_tokens" env:"OAUTH2_PROXY_SKIP_JWT_BEARER_TOKENS"`
 	ExtraJwtIssuers               []string      `flag:"extra-jwt-issuers" cfg:"extra_jwt_issuers" env:"OAUTH2_PROXY_EXTRA_JWT_ISSUERS"`
 	PassBasicAuth                 bool          `flag:"pass-basic-auth" cfg:"pass_basic_auth" env:"OAUTH2_PROXY_PASS_BASIC_AUTH"`
+	PreferEmailToUser             bool          `flag:"prefer-email-to-user" cfg:"prefer_email_to_user" env:"OAUTH2_PROXY_PREFER_EMAIL_TO_USER"`
 	BasicAuthPassword             string        `flag:"basic-auth-password" cfg:"basic_auth_password" env:"OAUTH2_PROXY_BASIC_AUTH_PASSWORD"`
 	PassAccessToken               bool          `flag:"pass-access-token" cfg:"pass_access_token" env:"OAUTH2_PROXY_PASS_ACCESS_TOKEN"`
 	PassHostHeader                bool          `flag:"pass-host-header" cfg:"pass_host_header" env:"OAUTH2_PROXY_PASS_HOST_HEADER"`
@@ -85,6 +90,7 @@ type Options struct {
 	// These options allow for other providers besides Google, with
 	// potential overrides.
 	Provider                         string `flag:"provider" cfg:"provider" env:"OAUTH2_PROXY_PROVIDER"`
+	ProviderName                     string `flag:"provider-display-name" cfg:"provider_display_name" env:"OAUTH2_PROXY_PROVIDER_DISPLAY_NAME"`
 	OIDCIssuerURL                    string `flag:"oidc-issuer-url" cfg:"oidc_issuer_url" env:"OAUTH2_PROXY_OIDC_ISSUER_URL"`
 	InsecureOIDCAllowUnverifiedEmail bool   `flag:"insecure-oidc-allow-unverified-email" cfg:"insecure_oidc_allow_unverified_email" env:"OAUTH2_PROXY_INSECURE_OIDC_ALLOW_UNVERIFIED_EMAIL"`
 	SkipOIDCDiscovery                bool   `flag:"skip-oidc-discovery" cfg:"skip_oidc_discovery" env:"OAUTH2_PROXY_SKIP_OIDC_DISCOVERY"`
@@ -95,7 +101,8 @@ type Options struct {
 	ProtectedResource                string `flag:"resource" cfg:"resource" env:"OAUTH2_PROXY_RESOURCE"`
 	ValidateURL                      string `flag:"validate-url" cfg:"validate_url" env:"OAUTH2_PROXY_VALIDATE_URL"`
 	Scope                            string `flag:"scope" cfg:"scope" env:"OAUTH2_PROXY_SCOPE"`
-	ApprovalPrompt                   string `flag:"approval-prompt" cfg:"approval_prompt" env:"OAUTH2_PROXY_APPROVAL_PROMPT"`
+	Prompt                           string `flag:"prompt" cfg:"prompt" env:"OAUTH2_PROXY_PROMPT"`
+	ApprovalPrompt                   string `flag:"approval-prompt" cfg:"approval_prompt" env:"OAUTH2_PROXY_APPROVAL_PROMPT"` // Deprecated by OIDC 1.0
 
 	// Configuration values for logging
 	LoggingFilename       string `flag:"logging-filename" cfg:"logging_filename" env:"OAUTH2_PROXY_LOGGING_FILENAME"`
@@ -144,6 +151,7 @@ func NewOptions() *Options {
 		ProxyWebSockets:     true,
 		HTTPAddress:         "127.0.0.1:4180",
 		HTTPSAddress:        ":443",
+		ForceHTTPS:          false,
 		DisplayHtpasswdForm: true,
 		CookieOptions: options.CookieOptions{
 			CookieName:     "_oauth2_proxy",
@@ -163,6 +171,8 @@ func NewOptions() *Options {
 		PassHostHeader:                   true,
 		SetAuthorization:                 false,
 		PassAuthorization:                false,
+		PreferEmailToUser:                false,
+		Prompt:                           "", // Change to "login" when ApprovalPrompt officially deprecated
 		ApprovalPrompt:                   "force",
 		InsecureOIDCAllowUnverifiedEmail: false,
 		SkipOIDCDiscovery:                false,
@@ -217,8 +227,16 @@ func (o *Options) Validate() error {
 		msgs = append(msgs, "missing setting: client-id")
 	}
 	// login.gov uses a signed JWT to authenticate, not a client-secret
-	if o.ClientSecret == "" && o.Provider != "login.gov" {
-		msgs = append(msgs, "missing setting: client-secret")
+	if o.Provider != "login.gov" {
+		if o.ClientSecret == "" && o.ClientSecretFile == "" {
+			msgs = append(msgs, "missing setting: client-secret or client-secret-file")
+		}
+		if o.ClientSecret == "" && o.ClientSecretFile != "" {
+			_, err := ioutil.ReadFile(o.ClientSecretFile)
+			if err != nil {
+				msgs = append(msgs, "could not read client secret file: "+o.ClientSecretFile)
+			}
+		}
 	}
 	if o.AuthenticatedEmailsFile == "" && len(o.EmailDomains) == 0 && o.HtpasswdFile == "" {
 		msgs = append(msgs, "missing setting for email validation: email-domain or authenticated-emails-file required."+
@@ -263,6 +281,10 @@ func (o *Options) Validate() error {
 		if o.Scope == "" {
 			o.Scope = "openid email profile"
 		}
+	}
+
+	if o.PreferEmailToUser == true && o.PassBasicAuth == false && o.PassUserHeaders == false {
+		msgs = append(msgs, "PreferEmailToUser should only be used with PassBasicAuth or PassUserHeaders")
 	}
 
 	if o.SkipJwtBearerTokens {
@@ -368,6 +390,12 @@ func (o *Options) Validate() error {
 		}
 	}
 
+	switch o.CookieSameSite {
+	case "", "none", "lax", "strict":
+	default:
+		msgs = append(msgs, fmt.Sprintf("cookie_samesite (%s) must be one of ['', 'lax', 'strict', 'none']", o.CookieSameSite))
+	}
+
 	msgs = parseSignatureKey(o, msgs)
 	msgs = validateCookieName(o, msgs)
 	msgs = setupLogger(o, msgs)
@@ -381,10 +409,13 @@ func (o *Options) Validate() error {
 
 func parseProviderInfo(o *Options, msgs []string) []string {
 	p := &providers.ProviderData{
-		Scope:          o.Scope,
-		ClientID:       o.ClientID,
-		ClientSecret:   o.ClientSecret,
-		ApprovalPrompt: o.ApprovalPrompt,
+		Scope:            o.Scope,
+		ClientID:         o.ClientID,
+		ClientSecret:     o.ClientSecret,
+		ClientSecretFile: o.ClientSecretFile,
+		Prompt:           o.Prompt,
+		ApprovalPrompt:   o.ApprovalPrompt,
+		AcrValues:        o.AcrValues,
 	}
 	p.LoginURL, msgs = parseURL(o.LoginURL, "login", msgs)
 	p.RedeemURL, msgs = parseURL(o.RedeemURL, "redeem", msgs)
@@ -398,6 +429,8 @@ func parseProviderInfo(o *Options, msgs []string) []string {
 		p.Configure(o.AzureTenant)
 	case *providers.GitHubProvider:
 		p.SetOrgTeam(o.GitHubOrg, o.GitHubTeam)
+	case *providers.KeycloakProvider:
+		p.SetGroup(o.KeycloakGroup)
 	case *providers.GoogleProvider:
 		if o.GoogleServiceAccountJSON != "" {
 			file, err := os.Open(o.GoogleServiceAccountJSON)
@@ -441,7 +474,6 @@ func parseProviderInfo(o *Options, msgs []string) []string {
 			}
 		}
 	case *providers.LoginGovProvider:
-		p.AcrValues = o.AcrValues
 		p.PubJWKURL, msgs = parseURL(o.PubJWKURL, "pubjwk", msgs)
 
 		// JWT key can be supplied via env variable or file in the filesystem, but not both.
@@ -605,6 +637,7 @@ func setupLogger(o *Options, msgs []string) []string {
 	logger.SetStandardTemplate(o.StandardLoggingFormat)
 	logger.SetAuthTemplate(o.AuthLoggingFormat)
 	logger.SetReqTemplate(o.RequestLoggingFormat)
+	logger.SetReverseProxy(o.ReverseProxy)
 
 	excludePaths := make([]string, 0)
 	excludePaths = append(excludePaths, strings.Split(o.ExcludeLoggingPaths, ",")...)

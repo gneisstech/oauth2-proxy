@@ -1,6 +1,126 @@
 # Vx.x.x (Pre-release)
 
+## Release Hightlights
+
+## Important Notes
+
+## Breaking Changes
+
+## Changes since v5.1.1
+
+# v5.1.1
+
+## Release Highlights
+
+N/A
+
+## Important Notes
+
+- (Security) Fix for [open redirect vulnerability](https://github.com/oauth2-proxy/oauth2-proxy/security/advisories/GHSA-j7px-6hwj-hpjg).
+  - A bad actor using encoded whitespace in redirect URIs can redirect a session to another domain
+
+## Breaking Changes
+
+N/A
+
+## Changes since v5.1.0
+
+- [GHSA-j7px-6hwj-hpjg](https://github.com/oauth2-proxy/oauth2-proxy/security/advisories/GHSA-j7px-6hwj-hpjg) Fix Open Redirect Vulnerability with encoded Whitespace characters (@JoelSpeed)
+
+# v5.1.0
+
+## Release Hightlights
+- Bump to Go 1.14
+- Reduced number of Google API requests for group validation
+- Support for Redis Cluster
+- Support for overriding hosts in hosts file
+
+## Important Notes
+- [#335] The session expiry for the OIDC provider is now taken from the Token Response (expires_in) rather than from the id_token (exp)
+
+## Breaking Changes
+N/A
+
+## Changes since v5.0.0
+
+- [#450](https://github.com/pusher/oauth2_proxy/pull/450) Fix http.Cookie SameSite is not copied (@johejo)
+- [#445](https://github.com/pusher/oauth2_proxy/pull/445) Expose `acr_values` to all providers (@holyjak)
+- [#419](https://github.com/pusher/oauth2_proxy/pull/419) Support Go 1.14, upgrade dependencies, upgrade golangci-lint to 1.23.6 (@johejo)
+- [#444](https://github.com/pusher/oauth2_proxy/pull/444) Support prompt in addition to approval-prompt (@holyjak)
+- [#435](https://github.com/pusher/oauth2_proxy/pull/435) Fix issue with group validation calling google directory API on every HTTP request (@ericofusco)
+- [#400](https://github.com/pusher/oauth2_proxy/pull/400) Add `nsswitch.conf` to Docker image to allow hosts file to work (@luketainton)
+- [#385](https://github.com/pusher/oauth2_proxy/pull/385) Use the `Authorization` header instead of `access_token` for refreshing GitHub Provider sessions (@ibuclaw)
+- [#372](https://github.com/pusher/oauth2_proxy/pull/372) Allow fallback to secondary verified email address in GitHub provider (@dmnemec)
+- [#335](https://github.com/pusher/oauth2_proxy/pull/335) OIDC Provider support for empty id_tokens in the access token refresh response (@howzat)
+- [#363](https://github.com/pusher/oauth2_proxy/pull/363) Extension of Redis Session Store to Support Redis Cluster (@yan-dblinf)
+- [#353](https://github.com/pusher/oauth2_proxy/pull/353) Fix login page fragment handling after soft reload on Firefox (@ffdybuster)
+- [#355](https://github.com/pusher/oauth2_proxy/pull/355) Add Client Secret File support for providers that rotate client secret via file system (@pasha-r)
+- [#401](https://github.com/pusher/oauth2_proxy/pull/401) Give the option to pass email address in the Basic auth header instead of upstream usernames. (@Spindel)
+- [#405](https://github.com/pusher/oauth2_proxy/pull/405) The `/sign_in` page now honors the `rd` query parameter, fixing the redirect after a successful authentication (@ti-mo)
+- [#434](https://github.com/pusher/oauth2_proxy/pull/434) Give the option to prefer email address in the username header when using the -pass-user-headers option (@jordancrawfordnz)
+
+# v5.0.0
+
+## Release Hightlights
+- Disabled CGO (binaries will work regardless og glibc/musl)
+- Allow whitelisted redirect ports
+- Nextcloud provider support added
+- DigitalOcean provider support added
+
+## Important Notes
+- (Security) Fix for [open redirect vulnerability](https://github.com/pusher/oauth2_proxy/security/advisories/GHSA-qqxw-m5fj-f7gv)..  a bad actor using `/\` in redirect URIs can redirect a session to another domain
+
+## Breaking Changes
+
+- [#321](https://github.com/pusher/oauth2_proxy/pull/331) Add reverse proxy boolean flag to control whether headers like `X-Real-Ip` are accepted.
+  This defaults to false. **Usage behind a reverse proxy will require this flag to be set to avoid logging the reverse proxy IP address**.
+
+## Changes since v4.1.0
+
+- [#331](https://github.com/pusher/oauth2_proxy/pull/331) Add reverse proxy setting (@martin-css)
+- [#365](https://github.com/pusher/oauth2_proxy/pull/365) Build with CGO=0 (@tomelliff)
+- [#339](https://github.com/pusher/oauth2_proxy/pull/339) Add configuration for cookie 'SameSite' value. (@pgroudas)
+- [#347](https://github.com/pusher/oauth2_proxy/pull/347) Update keycloak provider configuration documentation. (@sushiMix)
+- [#325](https://github.com/pusher/oauth2_proxy/pull/325) dist.sh: use sha256sum (@syscll)
+- [#179](https://github.com/pusher/oauth2_proxy/pull/179) Add Nextcloud provider (@Ramblurr)
+- [#280](https://github.com/pusher/oauth2_proxy/pull/280) whitelisted redirect domains: add support for whitelisting specific ports or allowing wildcard ports (@kamaln7)
+- [#351](https://github.com/pusher/oauth2_proxy/pull/351) Add DigitalOcean Auth provider (@kamaln7)
+
+# v4.1.0
+
+## Release Highlights
+- Added Keycloak provider
+- Build on Go 1.13
+- Upgrade Docker image to use Debian Buster
+- Added support for FreeBSD builds
+- Added new logo
+- Added support for GitHub teams
+
+## Important Notes
+N/A
+
+## Breaking Changes
+N/A
+
 ## Changes since v4.0.0
+- [#292](https://github.com/pusher/oauth2_proxy/pull/292) Added bash >= 4.0 dependency to configure script (@jmfrank63)
+- [#227](https://github.com/pusher/oauth2_proxy/pull/227) Add Keycloak provider (@Ofinka)
+- [#259](https://github.com/pusher/oauth2_proxy/pull/259) Redirect to HTTPS (@jmickey)
+- [#273](https://github.com/pusher/oauth2_proxy/pull/273) Support Go 1.13 (@dio)
+- [#275](https://github.com/pusher/oauth2_proxy/pull/275) docker: build from debian buster (@syscll)
+- [#258](https://github.com/pusher/oauth2_proxy/pull/258) Add IDToken for Azure provider (@leyshon)
+  - This PR adds the IDToken into the session for the Azure provider allowing requests to a backend to be identified as a specific user. As a consequence, if you are using a cookie to store the session the cookie will now exceed the 4kb size limit and be split into multiple cookies. This can cause problems when using nginx as a proxy, resulting in no cookie being passed at all. Either increase the proxy_buffer_size in nginx or implement the redis session storage (see https://pusher.github.io/oauth2_proxy/configuration#redis-storage)
+- [#286](https://github.com/pusher/oauth2_proxy/pull/286) Requests.go updated with useful error messages (@biotom)
+- [#274](https://github.com/pusher/oauth2_proxy/pull/274) Supports many github teams with api pagination support (@toshi-miura, @apratina)
+- [#302](https://github.com/pusher/oauth2_proxy/pull/302) Rewrite dist script (@syscll)
+- [#304](https://github.com/pusher/oauth2_proxy/pull/304) Add new Logo! :tada: (@JoelSpeed)
+- [#300](https://github.com/pusher/oauth2_proxy/pull/300) Added userinfo endpoint (@kbabuadze)
+- [#309](https://github.com/pusher/oauth2_proxy/pull/309) Added support for custom CA when connecting to Redis cache (@lleszczu)
+- [#248](https://github.com/pusher/oauth2_proxy/pull/248) Fix issue with X-Auth-Request-Redirect header being ignored (@webnard)
+- [#314](https://github.com/pusher/oauth2_proxy/pull/314) Add redirect capability to sign_out (@costelmoraru)
+- [#265](https://github.com/pusher/oauth2_proxy/pull/265) Add upstream with static response (@cgroschupp)
+- [#317](https://github.com/pusher/oauth2_proxy/pull/317) Add build for FreeBSD (@fnkr)
+- [#296](https://github.com/pusher/oauth2_proxy/pull/296) Allow to override provider's name for sign-in page (@ffdybuster)
 
 # v4.0.0
 

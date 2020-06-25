@@ -10,6 +10,7 @@ type Provider interface {
 	Data() *ProviderData
 	GetEmailAddress(*sessions.SessionState) (string, error)
 	GetUserName(*sessions.SessionState) (string, error)
+	GetPreferredUsername(*sessions.SessionState) (string, error)
 	Redeem(string, string) (*sessions.SessionState, error)
 	ValidateGroup(string) bool
 	ValidateSessionState(*sessions.SessionState) bool
@@ -28,6 +29,8 @@ func New(provider string, p *ProviderData) Provider {
 		return NewFacebookProvider(p)
 	case "github":
 		return NewGitHubProvider(p)
+	case "keycloak":
+		return NewKeycloakProvider(p)
 	case "azure":
 		return NewAzureProvider(p)
 	case "gitlab":
@@ -38,6 +41,10 @@ func New(provider string, p *ProviderData) Provider {
 		return NewLoginGovProvider(p)
 	case "bitbucket":
 		return NewBitbucketProvider(p)
+	case "nextcloud":
+		return NewNextcloudProvider(p)
+	case "digitalocean":
+		return NewDigitalOceanProvider(p)
 	default:
 		return NewGoogleProvider(p)
 	}

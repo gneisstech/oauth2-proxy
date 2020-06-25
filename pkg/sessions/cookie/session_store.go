@@ -136,18 +136,18 @@ func splitCookie(c *http.Cookie) []*http.Cookie {
 	valueBytes := []byte(c.Value)
 	count := 0
 	for len(valueBytes) > 0 {
-		new := copyCookie(c)
-		new.Name = fmt.Sprintf("%s_%d", c.Name, count)
+		newCookie := copyCookie(c)
+		newCookie.Name = fmt.Sprintf("%s_%d", c.Name, count)
 		count++
 		if len(valueBytes) < maxCookieLength {
-			new.Value = string(valueBytes)
+			newCookie.Value = string(valueBytes)
 			valueBytes = []byte{}
 		} else {
 			newValue := valueBytes[:maxCookieLength]
 			valueBytes = valueBytes[maxCookieLength:]
-			new.Value = string(newValue)
+			newCookie.Value = string(newValue)
 		}
-		cookies = append(cookies, new)
+		cookies = append(cookies, newCookie)
 	}
 	return cookies
 }
@@ -207,5 +207,6 @@ func copyCookie(c *http.Cookie) *http.Cookie {
 		HttpOnly:   c.HttpOnly,
 		Raw:        c.Raw,
 		Unparsed:   c.Unparsed,
+		SameSite:   c.SameSite,
 	}
 }

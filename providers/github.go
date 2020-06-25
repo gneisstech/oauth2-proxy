@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/url"
 	"path"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -52,6 +53,13 @@ func NewGitHubProvider(p *ProviderData) *GitHubProvider {
 	return &GitHubProvider{ProviderData: p}
 }
 
+func getGitHubHeader(accessToken string) http.Header {
+	header := make(http.Header)
+	header.Set("Accept", "application/vnd.github.v3+json")
+	header.Set("Authorization", fmt.Sprintf("token %s", accessToken))
+	return header
+}
+
 // SetOrgTeam adds GitHub org reading parameters to the OAuth2 scope
 func (p *GitHubProvider) SetOrgTeam(org, team string) {
 	p.Org = org
@@ -75,8 +83,8 @@ func (p *GitHubProvider) hasOrg(accessToken string) (bool, error) {
 	pn := 1
 	for {
 		params := url.Values{
-			"limit": {"200"},
-			"page":  {strconv.Itoa(pn)},
+			"per_page": {"100"},
+			"page":     {strconv.Itoa(pn)},
 		}
 
 		endpoint := &url.URL{
@@ -86,8 +94,7 @@ func (p *GitHubProvider) hasOrg(accessToken string) (bool, error) {
 			RawQuery: params.Encode(),
 		}
 		req, _ := http.NewRequest("GET", endpoint.String(), nil)
-		req.Header.Set("Accept", "application/vnd.github.v3+json")
-		req.Header.Set("Authorization", fmt.Sprintf("token %s", accessToken))
+		req.Header = getGitHubHeader(accessToken)
 		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
 			return false, err
@@ -139,36 +146,89 @@ func (p *GitHubProvider) hasOrgAndTeam(accessToken string) (bool, error) {
 		} `json:"organization"`
 	}
 
-	params := url.Values{
-		"limit": {"200"},
+	type teamsPage []struct {
+		Name string `json:"name"`
+		Slug string `json:"slug"`
+		Org  struct {
+			Login string `json:"login"`
+		} `json:"organization"`
 	}
 
-	endpoint := &url.URL{
-		Scheme:   p.ValidateURL.Scheme,
-		Host:     p.ValidateURL.Host,
-		Path:     path.Join(p.ValidateURL.Path, "/user/teams"),
-		RawQuery: params.Encode(),
-	}
-	req, _ := http.NewRequest("GET", endpoint.String(), nil)
-	req.Header.Set("Accept", "application/vnd.github.v3+json")
-	req.Header.Set("Authorization", fmt.Sprintf("token %s", accessToken))
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return false, err
-	}
+	pn := 1
+	last := 0
+	for {
+		params := url.Values{
+			"per_page": {"100"},
+			"page":     {strconv.Itoa(pn)},
+		}
 
-	body, err := ioutil.ReadAll(resp.Body)
-	resp.Body.Close()
-	if err != nil {
-		return false, err
-	}
-	if resp.StatusCode != 200 {
-		return false, fmt.Errorf(
-			"got %d from %q %s", resp.StatusCode, endpoint.String(), body)
-	}
+		endpoint := &url.URL{
+			Scheme:   p.ValidateURL.Scheme,
+			Host:     p.ValidateURL.Host,
+			Path:     path.Join(p.ValidateURL.Path, "/user/teams"),
+			RawQuery: params.Encode(),
+		}
 
-	if err := json.Unmarshal(body, &teams); err != nil {
-		return false, fmt.Errorf("%s unmarshaling %s", err, body)
+		req, _ := http.NewRequest("GET", endpoint.String(), nil)
+		req.Header = getGitHubHeader(accessToken)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			return false, err
+		}
+
+		if last == 0 {
+			// link header may not be obtained
+			// When paging is not required and all data can be retrieved with a single call
+
+			// Conditions for obtaining the link header.
+			// 1. When paging is required (Example: When the data size is 100 and the page size is 99 or less)
+			// 2. When it exceeds the paging frame (Example: When there is only 10 records but the second page is called with a page size of 100)
+
+			// link header at not last page
+			// <https://api.github.com/user/teams?page=1&per_page=100>; rel="prev", <https://api.github.com/user/teams?page=1&per_page=100>; rel="last", <https://api.github.com/user/teams?page=1&per_page=100>; rel="first"
+			// link header at last page (doesn't exist last info)
+			// <https://api.github.com/user/teams?page=3&per_page=10>; rel="prev", <https://api.github.com/user/teams?page=1&per_page=10>; rel="first"
+
+			link := resp.Header.Get("Link")
+			rep1 := regexp.MustCompile(`(?s).*\<https://api.github.com/user/teams\?page=(.)&per_page=[0-9]+\>; rel="last".*`)
+			i, converr := strconv.Atoi(rep1.ReplaceAllString(link, "$1"))
+
+			// If the last page cannot be taken from the link in the http header, the last variable remains zero
+			if converr == nil {
+				last = i
+			}
+		}
+
+		body, err := ioutil.ReadAll(resp.Body)
+		if err != nil {
+			resp.Body.Close()
+			return false, err
+		}
+		resp.Body.Close()
+
+		if resp.StatusCode != 200 {
+			return false, fmt.Errorf(
+				"got %d from %q %s", resp.StatusCode, endpoint.String(), body)
+		}
+
+		var tp teamsPage
+		if err := json.Unmarshal(body, &tp); err != nil {
+			return false, fmt.Errorf("%s unmarshaling %s", err, body)
+		}
+		if len(tp) == 0 {
+			break
+		}
+
+		teams = append(teams, tp...)
+
+		if pn == last {
+			break
+		}
+		if last == 0 {
+			break
+		}
+
+		pn++
 	}
 
 	var hasOrg bool
@@ -228,7 +288,7 @@ func (p *GitHubProvider) GetEmailAddress(s *sessions.SessionState) (string, erro
 		Path:   path.Join(p.ValidateURL.Path, "/user/emails"),
 	}
 	req, _ := http.NewRequest("GET", endpoint.String(), nil)
-	req.Header.Set("Authorization", fmt.Sprintf("token %s", s.AccessToken))
+	req.Header = getGitHubHeader(s.AccessToken)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return "", err
@@ -250,13 +310,17 @@ func (p *GitHubProvider) GetEmailAddress(s *sessions.SessionState) (string, erro
 		return "", fmt.Errorf("%s unmarshaling %s", err, body)
 	}
 
+	returnEmail := ""
 	for _, email := range emails {
-		if email.Primary && email.Verified {
-			return email.Email, nil
+		if email.Verified {
+			returnEmail = email.Email
+			if email.Primary {
+				return returnEmail, nil
+			}
 		}
 	}
 
-	return "", nil
+	return returnEmail, nil
 }
 
 // GetUserName returns the Account user name
@@ -277,7 +341,7 @@ func (p *GitHubProvider) GetUserName(s *sessions.SessionState) (string, error) {
 		return "", fmt.Errorf("could not create new GET request: %v", err)
 	}
 
-	req.Header.Set("Authorization", fmt.Sprintf("token %s", s.AccessToken))
+	req.Header = getGitHubHeader(s.AccessToken)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return "", err
@@ -301,4 +365,9 @@ func (p *GitHubProvider) GetUserName(s *sessions.SessionState) (string, error) {
 	}
 
 	return user.Login, nil
+}
+
+// ValidateSessionState validates the AccessToken
+func (p *GitHubProvider) ValidateSessionState(s *sessions.SessionState) bool {
+	return validateToken(p, s.AccessToken, getGitHubHeader(s.AccessToken))
 }

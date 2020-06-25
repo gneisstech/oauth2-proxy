@@ -3,7 +3,9 @@ package main
 import (
 	"crypto"
 	"fmt"
+	"io/ioutil"
 	"net/url"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -11,12 +13,18 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+const (
+	cookieSecret = "foobar"
+	clientID     = "bazquux"
+	clientSecret = "xyzzyplugh"
+)
+
 func testOptions() *Options {
 	o := NewOptions()
 	o.Upstreams = append(o.Upstreams, "http://127.0.0.1:8080/")
-	o.CookieSecret = "foobar"
-	o.ClientID = "bazquux"
-	o.ClientSecret = "xyzzyplugh"
+	o.CookieSecret = cookieSecret
+	o.ClientID = clientID
+	o.ClientSecret = clientSecret
 	o.EmailDomains = []string{"*"}
 	return o
 }
@@ -37,8 +45,56 @@ func TestNewOptions(t *testing.T) {
 	expected := errorMsg([]string{
 		"missing setting: cookie-secret",
 		"missing setting: client-id",
-		"missing setting: client-secret"})
+		"missing setting: client-secret or client-secret-file"})
 	assert.Equal(t, expected, err.Error())
+}
+
+func TestClientSecretFileOptionFails(t *testing.T) {
+	o := NewOptions()
+	o.CookieSecret = cookieSecret
+	o.ClientID = clientID
+	o.ClientSecretFile = clientSecret
+	o.EmailDomains = []string{"*"}
+	err := o.Validate()
+	assert.NotEqual(t, nil, err)
+
+	p := o.provider.Data()
+	assert.Equal(t, clientSecret, p.ClientSecretFile)
+	assert.Equal(t, "", p.ClientSecret)
+
+	s, err := p.GetClientSecret()
+	assert.NotEqual(t, nil, err)
+	assert.Equal(t, "", s)
+}
+
+func TestClientSecretFileOption(t *testing.T) {
+	var err error
+	f, err := ioutil.TempFile("", "client_secret_temp_file_")
+	if err != nil {
+		t.Fatalf("failed to create temp file: %v", err)
+	}
+	f.WriteString("testcase")
+	if err := f.Close(); err != nil {
+		t.Fatalf("failed to close temp file: %v", err)
+	}
+	clientSecretFileName := f.Name()
+	defer os.Remove(clientSecretFileName)
+
+	o := NewOptions()
+	o.CookieSecret = cookieSecret
+	o.ClientID = clientID
+	o.ClientSecretFile = clientSecretFileName
+	o.EmailDomains = []string{"*"}
+	err = o.Validate()
+	assert.Equal(t, nil, err)
+
+	p := o.provider.Data()
+	assert.Equal(t, clientSecretFileName, p.ClientSecretFile)
+	assert.Equal(t, "", p.ClientSecret)
+
+	s, err := p.GetClientSecret()
+	assert.Equal(t, nil, err)
+	assert.Equal(t, "testcase", s)
 }
 
 func TestGoogleGroupOptions(t *testing.T) {
@@ -100,11 +156,7 @@ func TestProxyURLsError(t *testing.T) {
 	o.Upstreams = append(o.Upstreams, "127.0.0.1:8081")
 	err := o.Validate()
 	assert.NotEqual(t, nil, err)
-
-	expected := errorMsg([]string{
-		"error parsing upstream: parse 127.0.0.1:8081: " +
-			"first path segment in URL cannot contain colon"})
-	assert.Equal(t, expected, err.Error())
+	assert.Contains(t, err.Error(), "error parsing upstream")
 }
 
 func TestCompiledRegex(t *testing.T) {
