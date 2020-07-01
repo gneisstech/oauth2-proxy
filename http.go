@@ -1,19 +1,24 @@
 package main
 
 import (
+	"context"
 	"crypto/tls"
+	"errors"
 	"net"
 	"net/http"
 	"strings"
 	"time"
 
-	"github.com/pusher/oauth2_proxy/pkg/logger"
+	"github.com/justinas/alice"
+	"github.com/oauth2-proxy/oauth2-proxy/pkg/apis/options"
+	"github.com/oauth2-proxy/oauth2-proxy/pkg/logger"
 )
 
 // Server represents an HTTP server
 type Server struct {
 	Handler http.Handler
-	Opts    *Options
+	Opts    *options.Options
+	stop    chan struct{} // channel for waiting shutdown
 }
 
 // ListenAndServe will serve traffic on HTTP or HTTPS depending on TLS options
@@ -23,45 +28,6 @@ func (s *Server) ListenAndServe() {
 	} else {
 		s.ServeHTTP()
 	}
-}
-
-// Used with gcpHealthcheck()
-const userAgentHeader = "User-Agent"
-const googleHealthCheckUserAgent = "GoogleHC/1.0"
-const rootPath = "/"
-
-// gcpHealthcheck handles healthcheck queries from GCP.
-func gcpHealthcheck(h http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Check for liveness and readiness:  used for Google App Engine
-		if r.URL.EscapedPath() == "/liveness_check" {
-			w.WriteHeader(http.StatusOK)
-			w.Write([]byte("OK"))
-			return
-		}
-		if r.URL.EscapedPath() == "/readiness_check" {
-			w.WriteHeader(http.StatusOK)
-			w.Write([]byte("OK"))
-			return
-		}
-
-		// Check for GKE ingress healthcheck:  The ingress requires the root
-		// path of the target to return a 200 (OK) to indicate the service's good health. This can be quite a challenging demand
-		// depending on the application's path structure. This middleware filters out the requests from the health check by
-		//
-		// 1. checking that the request path is indeed the root path
-		// 2. ensuring that the User-Agent is "GoogleHC/1.0", the health checker
-		// 3. ensuring the request method is "GET"
-		if r.URL.Path == rootPath &&
-			r.Header.Get(userAgentHeader) == googleHealthCheckUserAgent &&
-			r.Method == http.MethodGet {
-
-			w.WriteHeader(http.StatusOK)
-			return
-		}
-
-		h.ServeHTTP(w, r)
-	})
 }
 
 // ServeHTTP constructs a net.Listener and starts handling HTTP requests
@@ -90,13 +56,7 @@ func (s *Server) ServeHTTP() {
 		logger.Fatalf("FATAL: listen (%s, %s) failed - %s", networkType, listenAddr, err)
 	}
 	logger.Printf("HTTP: listening on %s", listenAddr)
-
-	server := &http.Server{Handler: s.Handler}
-	err = server.Serve(listener)
-	if err != nil && !strings.Contains(err.Error(), "use of closed network connection") {
-		logger.Printf("ERROR: http.Serve() - %s", err)
-	}
-
+	s.serve(listener)
 	logger.Printf("HTTP: closing %s", listener.Addr())
 }
 
@@ -125,14 +85,31 @@ func (s *Server) ServeHTTPS() {
 	logger.Printf("HTTPS: listening on %s", ln.Addr())
 
 	tlsListener := tls.NewListener(tcpKeepAliveListener{ln.(*net.TCPListener)}, config)
-	srv := &http.Server{Handler: s.Handler}
-	err = srv.Serve(tlsListener)
-
-	if err != nil && !strings.Contains(err.Error(), "use of closed network connection") {
-		logger.Printf("ERROR: https.Serve() - %s", err)
-	}
-
+	s.serve(tlsListener)
 	logger.Printf("HTTPS: closing %s", tlsListener.Addr())
+}
+
+func (s *Server) serve(listener net.Listener) {
+	srv := &http.Server{Handler: s.Handler}
+
+	// See https://golang.org/pkg/net/http/#Server.Shutdown
+	idleConnsClosed := make(chan struct{})
+	go func() {
+		<-s.stop // wait notification for stopping server
+
+		// We received an interrupt signal, shut down.
+		if err := srv.Shutdown(context.Background()); err != nil {
+			// Error from closing listeners, or context timeout:
+			logger.Printf("HTTP server Shutdown: %v", err)
+		}
+		close(idleConnsClosed)
+	}()
+
+	err := srv.Serve(listener)
+	if err != nil && !errors.Is(err, http.ErrServerClosed) {
+		logger.Printf("ERROR: http.Serve() - %s", err)
+	}
+	<-idleConnsClosed
 }
 
 // tcpKeepAliveListener sets TCP keep-alive timeouts on accepted
@@ -153,7 +130,13 @@ func (ln tcpKeepAliveListener) Accept() (c net.Conn, err error) {
 	return tc, nil
 }
 
-func redirectToHTTPS(opts *Options, h http.Handler) http.Handler {
+func newRedirectToHTTPS(opts *options.Options) alice.Constructor {
+	return func(next http.Handler) http.Handler {
+		return redirectToHTTPS(opts, next)
+	}
+}
+
+func redirectToHTTPS(opts *options.Options, h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		proto := r.Header.Get("X-Forwarded-Proto")
 		if opts.ForceHTTPS && (r.TLS == nil || (proto != "" && strings.ToLower(proto) != "https")) {

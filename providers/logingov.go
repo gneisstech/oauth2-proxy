@@ -2,6 +2,7 @@ package providers
 
 import (
 	"bytes"
+	"context"
 	"crypto/rsa"
 	"encoding/json"
 	"errors"
@@ -13,7 +14,7 @@ import (
 	"time"
 
 	"github.com/dgrijalva/jwt-go"
-	"github.com/pusher/oauth2_proxy/pkg/apis/sessions"
+	"github.com/oauth2-proxy/oauth2-proxy/pkg/apis/sessions"
 	"gopkg.in/square/go-jose.v2"
 )
 
@@ -27,6 +28,8 @@ type LoginGovProvider struct {
 	JWTKey    *rsa.PrivateKey
 	PubJWKURL *url.URL
 }
+
+var _ Provider = (*LoginGovProvider)(nil)
 
 // For generating a nonce
 var letters = []rune("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ")
@@ -125,10 +128,10 @@ func checkNonce(idToken string, p *LoginGovProvider) (err error) {
 	return
 }
 
-func emailFromUserInfo(accessToken string, userInfoEndpoint string) (email string, err error) {
+func emailFromUserInfo(ctx context.Context, accessToken string, userInfoEndpoint string) (email string, err error) {
 	// query the user info endpoint for user attributes
 	var req *http.Request
-	req, err = http.NewRequest("GET", userInfoEndpoint, nil)
+	req, err = http.NewRequestWithContext(ctx, "GET", userInfoEndpoint, nil)
 	if err != nil {
 		return
 	}
@@ -173,7 +176,7 @@ func emailFromUserInfo(accessToken string, userInfoEndpoint string) (email strin
 }
 
 // Redeem exchanges the OAuth2 authentication token for an ID token
-func (p *LoginGovProvider) Redeem(redirectURL, code string) (s *sessions.SessionState, err error) {
+func (p *LoginGovProvider) Redeem(ctx context.Context, redirectURL, code string) (s *sessions.SessionState, err error) {
 	if code == "" {
 		err = errors.New("missing code")
 		return
@@ -183,7 +186,7 @@ func (p *LoginGovProvider) Redeem(redirectURL, code string) (s *sessions.Session
 		Issuer:    p.ClientID,
 		Subject:   p.ClientID,
 		Audience:  p.RedeemURL.String(),
-		ExpiresAt: int64(time.Now().Add(time.Duration(5 * time.Minute)).Unix()),
+		ExpiresAt: time.Now().Add(5 * time.Minute).Unix(),
 		Id:        randSeq(32),
 	}
 	token := jwt.NewWithClaims(jwt.GetSigningMethod("RS256"), claims)
@@ -199,7 +202,7 @@ func (p *LoginGovProvider) Redeem(redirectURL, code string) (s *sessions.Session
 	params.Add("grant_type", "authorization_code")
 
 	var req *http.Request
-	req, err = http.NewRequest("POST", p.RedeemURL.String(), bytes.NewBufferString(params.Encode()))
+	req, err = http.NewRequestWithContext(ctx, "POST", p.RedeemURL.String(), bytes.NewBufferString(params.Encode()))
 	if err != nil {
 		return
 	}
@@ -242,17 +245,20 @@ func (p *LoginGovProvider) Redeem(redirectURL, code string) (s *sessions.Session
 
 	// Get the email address
 	var email string
-	email, err = emailFromUserInfo(jsonResponse.AccessToken, p.ProfileURL.String())
+	email, err = emailFromUserInfo(ctx, jsonResponse.AccessToken, p.ProfileURL.String())
 	if err != nil {
 		return
 	}
+
+	created := time.Now()
+	expires := time.Now().Add(time.Duration(jsonResponse.ExpiresIn) * time.Second).Truncate(time.Second)
 
 	// Store the data that we found in the session state
 	s = &sessions.SessionState{
 		AccessToken: jsonResponse.AccessToken,
 		IDToken:     jsonResponse.IDToken,
-		CreatedAt:   time.Now(),
-		ExpiresOn:   time.Now().Add(time.Duration(jsonResponse.ExpiresIn) * time.Second).Truncate(time.Second),
+		CreatedAt:   &created,
+		ExpiresOn:   &expires,
 		Email:       email,
 	}
 	return
@@ -260,8 +266,7 @@ func (p *LoginGovProvider) Redeem(redirectURL, code string) (s *sessions.Session
 
 // GetLoginURL overrides GetLoginURL to add login.gov parameters
 func (p *LoginGovProvider) GetLoginURL(redirectURI, state string) string {
-	var a url.URL
-	a = *p.LoginURL
+	a := *p.LoginURL
 	params, _ := url.ParseQuery(a.RawQuery)
 	params.Set("redirect_uri", redirectURI)
 	params.Set("approval_prompt", p.ApprovalPrompt)

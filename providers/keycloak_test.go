@@ -1,13 +1,15 @@
 package providers
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"testing"
 
-	"github.com/bmizerany/assert"
-	"github.com/pusher/oauth2_proxy/pkg/apis/sessions"
+	"github.com/stretchr/testify/assert"
+
+	"github.com/oauth2-proxy/oauth2-proxy/pkg/apis/sessions"
 )
 
 func testKeycloakProvider(hostname, group string) *KeycloakProvider {
@@ -98,7 +100,7 @@ func TestKeycloakProviderGetEmailAddress(t *testing.T) {
 	p := testKeycloakProvider(bURL.Host, "")
 
 	session := CreateAuthorizedSession()
-	email, err := p.GetEmailAddress(session)
+	email, err := p.GetEmailAddress(context.Background(), session)
 	assert.Equal(t, nil, err)
 	assert.Equal(t, "michael.bland@gsa.gov", email)
 }
@@ -111,7 +113,7 @@ func TestKeycloakProviderGetEmailAddressAndGroup(t *testing.T) {
 	p := testKeycloakProvider(bURL.Host, "test-grp1")
 
 	session := CreateAuthorizedSession()
-	email, err := p.GetEmailAddress(session)
+	email, err := p.GetEmailAddress(context.Background(), session)
 	assert.Equal(t, nil, err)
 	assert.Equal(t, "michael.bland@gsa.gov", email)
 }
@@ -129,7 +131,7 @@ func TestKeycloakProviderGetEmailAddressFailedRequest(t *testing.T) {
 	// token. Alternatively, we could allow the parsing of the payload as
 	// JSON to fail.
 	session := &sessions.SessionState{AccessToken: "unexpected_access_token"}
-	email, err := p.GetEmailAddress(session)
+	email, err := p.GetEmailAddress(context.Background(), session)
 	assert.NotEqual(t, nil, err)
 	assert.Equal(t, "", email)
 }
@@ -142,7 +144,7 @@ func TestKeycloakProviderGetEmailAddressEmailNotPresentInPayload(t *testing.T) {
 	p := testKeycloakProvider(bURL.Host, "")
 
 	session := CreateAuthorizedSession()
-	email, err := p.GetEmailAddress(session)
+	email, err := p.GetEmailAddress(context.Background(), session)
 	assert.NotEqual(t, nil, err)
 	assert.Equal(t, "", email)
 }

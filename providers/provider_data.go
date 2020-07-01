@@ -5,7 +5,7 @@ import (
 	"io/ioutil"
 	"net/url"
 
-	"github.com/pusher/oauth2_proxy/pkg/logger"
+	"github.com/oauth2-proxy/oauth2-proxy/pkg/logger"
 )
 
 // ProviderData contains information required to configure all implementations
@@ -31,7 +31,7 @@ type ProviderData struct {
 // Data returns the ProviderData
 func (p *ProviderData) Data() *ProviderData { return p }
 
-func (p *ProviderData) GetClientSecret() (ClientSecret string, err error) {
+func (p *ProviderData) GetClientSecret() (clientSecret string, err error) {
 	if p.ClientSecret != "" || p.ClientSecretFile == "" {
 		return p.ClientSecret, nil
 	}
