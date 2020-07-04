@@ -1,12 +1,12 @@
 # Docs
 
 This folder contains our Jekyll based docs site which is hosted at
-https://pusher.github.io/oauth2_proxy.
+https://oauth2-proxy.github.io/oauth2-proxy.
 
 When making changes to this docs site, please test your changes locally:
 
 ```bash
-make serve
+docs$ make serve
 ```
 
 To run the docs site locally you will need Ruby at version 2.1.0 or

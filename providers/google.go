@@ -2,6 +2,7 @@ package providers
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -13,12 +14,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/pusher/oauth2_proxy/pkg/apis/sessions"
-	"github.com/pusher/oauth2_proxy/pkg/logger"
-	"golang.org/x/oauth2"
+	"github.com/oauth2-proxy/oauth2-proxy/pkg/apis/sessions"
+	"github.com/oauth2-proxy/oauth2-proxy/pkg/logger"
 	"golang.org/x/oauth2/google"
 	admin "google.golang.org/api/admin/directory/v1"
 	"google.golang.org/api/googleapi"
+	"google.golang.org/api/option"
 )
 
 // GoogleProvider represents an Google based Identity Provider
@@ -29,6 +30,8 @@ type GoogleProvider struct {
 	// the configured Google group.
 	GroupValidator func(string) bool
 }
+
+var _ Provider = (*GoogleProvider)(nil)
 
 type claims struct {
 	Subject       string `json:"sub"`
@@ -97,20 +100,24 @@ func claimsFromIDToken(idToken string) (*claims, error) {
 }
 
 // Redeem exchanges the OAuth2 authentication token for an ID token
-func (p *GoogleProvider) Redeem(redirectURL, code string) (s *sessions.SessionState, err error) {
+func (p *GoogleProvider) Redeem(ctx context.Context, redirectURL, code string) (s *sessions.SessionState, err error) {
 	if code == "" {
 		err = errors.New("missing code")
+		return
+	}
+	clientSecret, err := p.GetClientSecret()
+	if err != nil {
 		return
 	}
 
 	params := url.Values{}
 	params.Add("redirect_uri", redirectURL)
 	params.Add("client_id", p.ClientID)
-	params.Add("client_secret", p.ClientSecret)
+	params.Add("client_secret", clientSecret)
 	params.Add("code", code)
 	params.Add("grant_type", "authorization_code")
 	var req *http.Request
-	req, err = http.NewRequest("POST", p.RedeemURL.String(), bytes.NewBufferString(params.Encode()))
+	req, err = http.NewRequestWithContext(ctx, "POST", p.RedeemURL.String(), bytes.NewBufferString(params.Encode()))
 	if err != nil {
 		return
 	}
@@ -146,11 +153,14 @@ func (p *GoogleProvider) Redeem(redirectURL, code string) (s *sessions.SessionSt
 	if err != nil {
 		return
 	}
+
+	created := time.Now()
+	expires := time.Now().Add(time.Duration(jsonResponse.ExpiresIn) * time.Second).Truncate(time.Second)
 	s = &sessions.SessionState{
 		AccessToken:  jsonResponse.AccessToken,
 		IDToken:      jsonResponse.IDToken,
-		CreatedAt:    time.Now(),
-		ExpiresOn:    time.Now().Add(time.Duration(jsonResponse.ExpiresIn) * time.Second).Truncate(time.Second),
+		CreatedAt:    &created,
+		ExpiresOn:    &expires,
 		RefreshToken: jsonResponse.RefreshToken,
 		Email:        c.Email,
 		User:         c.Subject,
@@ -180,8 +190,9 @@ func getAdminService(adminEmail string, credentialsReader io.Reader) *admin.Serv
 	}
 	conf.Subject = adminEmail
 
-	client := conf.Client(oauth2.NoContext)
-	adminService, err := admin.New(client)
+	ctx := context.Background()
+	client := conf.Client(ctx)
+	adminService, err := admin.NewService(ctx, option.WithHTTPClient(client))
 	if err != nil {
 		logger.Fatal(err)
 	}
@@ -194,10 +205,11 @@ func userInGroup(service *admin.Service, groups []string, email string) bool {
 		req := service.Members.HasMember(group, email)
 		r, err := req.Do()
 		if err != nil {
-			err, ok := err.(*googleapi.Error)
-			if ok && err.Code == 404 {
+			gerr, ok := err.(*googleapi.Error)
+			switch {
+			case ok && gerr.Code == 404:
 				logger.Printf("error checking membership in group %s: group does not exist", group)
-			} else if ok && err.Code == 400 {
+			case ok && gerr.Code == 400:
 				// It is possible for Members.HasMember to return false even if the email is a group member.
 				// One case that can cause this is if the user email is from a different domain than the group,
 				// e.g. "member@otherdomain.com" in the group "group@mydomain.com" will result in a 400 error
@@ -215,7 +227,7 @@ func userInGroup(service *admin.Service, groups []string, email string) bool {
 				if r.Status == "ACTIVE" {
 					return true
 				}
-			} else {
+			default:
 				logger.Printf("error checking group membership: %v", err)
 			}
 			continue
@@ -235,12 +247,12 @@ func (p *GoogleProvider) ValidateGroup(email string) bool {
 
 // RefreshSessionIfNeeded checks if the session has expired and uses the
 // RefreshToken to fetch a new ID token if required
-func (p *GoogleProvider) RefreshSessionIfNeeded(s *sessions.SessionState) (bool, error) {
-	if s == nil || s.ExpiresOn.After(time.Now()) || s.RefreshToken == "" {
+func (p *GoogleProvider) RefreshSessionIfNeeded(ctx context.Context, s *sessions.SessionState) (bool, error) {
+	if s == nil || (s.ExpiresOn != nil && s.ExpiresOn.After(time.Now())) || s.RefreshToken == "" {
 		return false, nil
 	}
 
-	newToken, newIDToken, duration, err := p.redeemRefreshToken(s.RefreshToken)
+	newToken, newIDToken, duration, err := p.redeemRefreshToken(ctx, s.RefreshToken)
 	if err != nil {
 		return false, err
 	}
@@ -251,22 +263,28 @@ func (p *GoogleProvider) RefreshSessionIfNeeded(s *sessions.SessionState) (bool,
 	}
 
 	origExpiration := s.ExpiresOn
+	expires := time.Now().Add(duration).Truncate(time.Second)
 	s.AccessToken = newToken
 	s.IDToken = newIDToken
-	s.ExpiresOn = time.Now().Add(duration).Truncate(time.Second)
+	s.ExpiresOn = &expires
 	logger.Printf("refreshed access token %s (expired on %s)", s, origExpiration)
 	return true, nil
 }
 
-func (p *GoogleProvider) redeemRefreshToken(refreshToken string) (token string, idToken string, expires time.Duration, err error) {
+func (p *GoogleProvider) redeemRefreshToken(ctx context.Context, refreshToken string) (token string, idToken string, expires time.Duration, err error) {
 	// https://developers.google.com/identity/protocols/OAuth2WebServer#refresh
+	clientSecret, err := p.GetClientSecret()
+	if err != nil {
+		return
+	}
+
 	params := url.Values{}
 	params.Add("client_id", p.ClientID)
-	params.Add("client_secret", p.ClientSecret)
+	params.Add("client_secret", clientSecret)
 	params.Add("refresh_token", refreshToken)
 	params.Add("grant_type", "refresh_token")
 	var req *http.Request
-	req, err = http.NewRequest("POST", p.RedeemURL.String(), bytes.NewBufferString(params.Encode()))
+	req, err = http.NewRequestWithContext(ctx, "POST", p.RedeemURL.String(), bytes.NewBufferString(params.Encode()))
 	if err != nil {
 		return
 	}

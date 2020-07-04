@@ -1,12 +1,13 @@
 package providers
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"testing"
 
-	"github.com/pusher/oauth2_proxy/pkg/apis/sessions"
+	"github.com/oauth2-proxy/oauth2-proxy/pkg/apis/sessions"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -34,7 +35,7 @@ func testLinkedInBackend(payload string) *httptest.Server {
 		func(w http.ResponseWriter, r *http.Request) {
 			if r.URL.Path != path {
 				w.WriteHeader(404)
-			} else if r.Header.Get("Authorization") != "Bearer imaginary_access_token" {
+			} else if !IsAuthorizedInHeader(r.Header) {
 				w.WriteHeader(403)
 			} else {
 				w.WriteHeader(200)
@@ -98,8 +99,8 @@ func TestLinkedInProviderGetEmailAddress(t *testing.T) {
 	bURL, _ := url.Parse(b.URL)
 	p := testLinkedInProvider(bURL.Host)
 
-	session := &sessions.SessionState{AccessToken: "imaginary_access_token"}
-	email, err := p.GetEmailAddress(session)
+	session := CreateAuthorizedSession()
+	email, err := p.GetEmailAddress(context.Background(), session)
 	assert.Equal(t, nil, err)
 	assert.Equal(t, "user@linkedin.com", email)
 }
@@ -115,7 +116,7 @@ func TestLinkedInProviderGetEmailAddressFailedRequest(t *testing.T) {
 	// token. Alternatively, we could allow the parsing of the payload as
 	// JSON to fail.
 	session := &sessions.SessionState{AccessToken: "unexpected_access_token"}
-	email, err := p.GetEmailAddress(session)
+	email, err := p.GetEmailAddress(context.Background(), session)
 	assert.NotEqual(t, nil, err)
 	assert.Equal(t, "", email)
 }
@@ -127,8 +128,8 @@ func TestLinkedInProviderGetEmailAddressEmailNotPresentInPayload(t *testing.T) {
 	bURL, _ := url.Parse(b.URL)
 	p := testLinkedInProvider(bURL.Host)
 
-	session := &sessions.SessionState{AccessToken: "imaginary_access_token"}
-	email, err := p.GetEmailAddress(session)
+	session := CreateAuthorizedSession()
+	email, err := p.GetEmailAddress(context.Background(), session)
 	assert.NotEqual(t, nil, err)
 	assert.Equal(t, "", email)
 }

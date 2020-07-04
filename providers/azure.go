@@ -1,15 +1,20 @@
 package providers
 
 import (
+	"bytes"
+	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io/ioutil"
 	"net/http"
 	"net/url"
+	"time"
 
 	"github.com/bitly/go-simplejson"
-	"github.com/pusher/oauth2_proxy/pkg/apis/sessions"
-	"github.com/pusher/oauth2_proxy/pkg/logger"
-	"github.com/pusher/oauth2_proxy/pkg/requests"
+	"github.com/oauth2-proxy/oauth2-proxy/pkg/apis/sessions"
+	"github.com/oauth2-proxy/oauth2-proxy/pkg/logger"
+	"github.com/oauth2-proxy/oauth2-proxy/pkg/requests"
 )
 
 // AzureProvider represents an Azure based Identity Provider
@@ -18,22 +23,23 @@ type AzureProvider struct {
 	Tenant string
 }
 
+var _ Provider = (*AzureProvider)(nil)
+
 // NewAzureProvider initiates a new AzureProvider
 func NewAzureProvider(p *ProviderData) *AzureProvider {
 	p.ProviderName = "Azure"
 
 	if p.ProfileURL == nil || p.ProfileURL.String() == "" {
 		p.ProfileURL = &url.URL{
-			Scheme:   "https",
-			Host:     "graph.windows.net",
-			Path:     "/me",
-			RawQuery: "api-version=1.6",
+			Scheme: "https",
+			Host:   "graph.microsoft.com",
+			Path:   "/v1.0/me",
 		}
 	}
 	if p.ProtectedResource == nil || p.ProtectedResource.String() == "" {
 		p.ProtectedResource = &url.URL{
 			Scheme: "https",
-			Host:   "graph.windows.net",
+			Host:   "graph.microsoft.com",
 		}
 	}
 	if p.Scope == "" {
@@ -65,6 +71,73 @@ func (p *AzureProvider) Configure(tenant string) {
 	}
 }
 
+func (p *AzureProvider) Redeem(ctx context.Context, redirectURL, code string) (s *sessions.SessionState, err error) {
+	if code == "" {
+		err = errors.New("missing code")
+		return
+	}
+	clientSecret, err := p.GetClientSecret()
+	if err != nil {
+		return
+	}
+
+	params := url.Values{}
+	params.Add("redirect_uri", redirectURL)
+	params.Add("client_id", p.ClientID)
+	params.Add("client_secret", clientSecret)
+	params.Add("code", code)
+	params.Add("grant_type", "authorization_code")
+	if p.ProtectedResource != nil && p.ProtectedResource.String() != "" {
+		params.Add("resource", p.ProtectedResource.String())
+	}
+
+	var req *http.Request
+	req, err = http.NewRequestWithContext(ctx, "POST", p.RedeemURL.String(), bytes.NewBufferString(params.Encode()))
+	if err != nil {
+		return
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	var resp *http.Response
+	resp, err = http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	var body []byte
+	body, err = ioutil.ReadAll(resp.Body)
+	resp.Body.Close()
+	if err != nil {
+		return
+	}
+
+	if resp.StatusCode != 200 {
+		err = fmt.Errorf("got %d from %q %s", resp.StatusCode, p.RedeemURL.String(), body)
+		return
+	}
+
+	var jsonResponse struct {
+		AccessToken  string `json:"access_token"`
+		RefreshToken string `json:"refresh_token"`
+		ExpiresOn    int64  `json:"expires_on,string"`
+		IDToken      string `json:"id_token"`
+	}
+	err = json.Unmarshal(body, &jsonResponse)
+	if err != nil {
+		return
+	}
+
+	created := time.Now()
+	expires := time.Unix(jsonResponse.ExpiresOn, 0)
+	s = &sessions.SessionState{
+		AccessToken:  jsonResponse.AccessToken,
+		IDToken:      jsonResponse.IDToken,
+		CreatedAt:    &created,
+		ExpiresOn:    &expires,
+		RefreshToken: jsonResponse.RefreshToken,
+	}
+	return
+}
+
 func getAzureHeader(accessToken string) http.Header {
 	header := make(http.Header)
 	header.Set("Authorization", fmt.Sprintf("Bearer %s", accessToken))
@@ -89,7 +162,7 @@ func getEmailFromJSON(json *simplejson.Json) (string, error) {
 }
 
 // GetEmailAddress returns the Account email address
-func (p *AzureProvider) GetEmailAddress(s *sessions.SessionState) (string, error) {
+func (p *AzureProvider) GetEmailAddress(ctx context.Context, s *sessions.SessionState) (string, error) {
 	var email string
 	var err error
 
@@ -100,7 +173,7 @@ func (p *AzureProvider) GetEmailAddress(s *sessions.SessionState) (string, error
 		// profile URL and hence email is not implemented when a specific protected resource is requested
 		return "protected+resource@example.com", errors.New("not implemented")
 	}
-	req, err := http.NewRequest("GET", p.ProfileURL.String(), nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", p.ProfileURL.String(), nil)
 	if err != nil {
 		return "", err
 	}

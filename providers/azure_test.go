@@ -1,12 +1,13 @@
 package providers
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"testing"
+	"time"
 
-	"github.com/pusher/oauth2_proxy/pkg/apis/sessions"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -20,6 +21,7 @@ func testAzureProvider(hostname string) *AzureProvider {
 			ValidateURL:       &url.URL{},
 			ProtectedResource: &url.URL{},
 			Scope:             ""})
+
 	if hostname != "" {
 		updateURL(p.Data().LoginURL, hostname)
 		updateURL(p.Data().RedeemURL, hostname)
@@ -40,9 +42,9 @@ func TestAzureProviderDefaults(t *testing.T) {
 		p.Data().LoginURL.String())
 	assert.Equal(t, "https://login.microsoftonline.com/common/oauth2/token",
 		p.Data().RedeemURL.String())
-	assert.Equal(t, "https://graph.windows.net/me?api-version=1.6",
+	assert.Equal(t, "https://graph.microsoft.com/v1.0/me",
 		p.Data().ProfileURL.String())
-	assert.Equal(t, "https://graph.windows.net",
+	assert.Equal(t, "https://graph.microsoft.com",
 		p.Data().ProtectedResource.String())
 	assert.Equal(t, "",
 		p.Data().ValidateURL.String())
@@ -96,9 +98,9 @@ func TestAzureSetTenant(t *testing.T) {
 		p.Data().LoginURL.String())
 	assert.Equal(t, "https://login.microsoftonline.com/example/oauth2/token",
 		p.Data().RedeemURL.String())
-	assert.Equal(t, "https://graph.windows.net/me?api-version=1.6",
+	assert.Equal(t, "https://graph.microsoft.com/v1.0/me",
 		p.Data().ProfileURL.String())
-	assert.Equal(t, "https://graph.windows.net",
+	assert.Equal(t, "https://graph.microsoft.com",
 		p.Data().ProtectedResource.String())
 	assert.Equal(t, "",
 		p.Data().ValidateURL.String())
@@ -106,14 +108,16 @@ func TestAzureSetTenant(t *testing.T) {
 }
 
 func testAzureBackend(payload string) *httptest.Server {
-	path := "/me"
-	query := "api-version=1.6"
+	path := "/v1.0/me"
 
 	return httptest.NewServer(http.HandlerFunc(
 		func(w http.ResponseWriter, r *http.Request) {
-			if r.URL.Path != path || r.URL.RawQuery != query {
+			if (r.URL.Path != path) && r.Method != http.MethodPost {
 				w.WriteHeader(404)
-			} else if r.Header.Get("Authorization") != "Bearer imaginary_access_token" {
+			} else if r.Method == http.MethodPost && r.Body != nil {
+				w.WriteHeader(200)
+				w.Write([]byte(payload))
+			} else if !IsAuthorizedInHeader(r.Header) {
 				w.WriteHeader(403)
 			} else {
 				w.WriteHeader(200)
@@ -129,8 +133,8 @@ func TestAzureProviderGetEmailAddress(t *testing.T) {
 	bURL, _ := url.Parse(b.URL)
 	p := testAzureProvider(bURL.Host)
 
-	session := &sessions.SessionState{AccessToken: "imaginary_access_token"}
-	email, err := p.GetEmailAddress(session)
+	session := CreateAuthorizedSession()
+	email, err := p.GetEmailAddress(context.Background(), session)
 	assert.Equal(t, nil, err)
 	assert.Equal(t, "user@windows.net", email)
 }
@@ -142,8 +146,8 @@ func TestAzureProviderGetEmailAddressMailNull(t *testing.T) {
 	bURL, _ := url.Parse(b.URL)
 	p := testAzureProvider(bURL.Host)
 
-	session := &sessions.SessionState{AccessToken: "imaginary_access_token"}
-	email, err := p.GetEmailAddress(session)
+	session := CreateAuthorizedSession()
+	email, err := p.GetEmailAddress(context.Background(), session)
 	assert.Equal(t, nil, err)
 	assert.Equal(t, "user@windows.net", email)
 }
@@ -155,8 +159,8 @@ func TestAzureProviderGetEmailAddressGetUserPrincipalName(t *testing.T) {
 	bURL, _ := url.Parse(b.URL)
 	p := testAzureProvider(bURL.Host)
 
-	session := &sessions.SessionState{AccessToken: "imaginary_access_token"}
-	email, err := p.GetEmailAddress(session)
+	session := CreateAuthorizedSession()
+	email, err := p.GetEmailAddress(context.Background(), session)
 	assert.Equal(t, nil, err)
 	assert.Equal(t, "user@windows.net", email)
 }
@@ -168,8 +172,8 @@ func TestAzureProviderGetEmailAddressFailToGetEmailAddress(t *testing.T) {
 	bURL, _ := url.Parse(b.URL)
 	p := testAzureProvider(bURL.Host)
 
-	session := &sessions.SessionState{AccessToken: "imaginary_access_token"}
-	email, err := p.GetEmailAddress(session)
+	session := CreateAuthorizedSession()
+	email, err := p.GetEmailAddress(context.Background(), session)
 	assert.Equal(t, "type assertion to string failed", err.Error())
 	assert.Equal(t, "", email)
 }
@@ -181,8 +185,8 @@ func TestAzureProviderGetEmailAddressEmptyUserPrincipalName(t *testing.T) {
 	bURL, _ := url.Parse(b.URL)
 	p := testAzureProvider(bURL.Host)
 
-	session := &sessions.SessionState{AccessToken: "imaginary_access_token"}
-	email, err := p.GetEmailAddress(session)
+	session := CreateAuthorizedSession()
+	email, err := p.GetEmailAddress(context.Background(), session)
 	assert.Equal(t, nil, err)
 	assert.Equal(t, "", email)
 }
@@ -194,8 +198,24 @@ func TestAzureProviderGetEmailAddressIncorrectOtherMails(t *testing.T) {
 	bURL, _ := url.Parse(b.URL)
 	p := testAzureProvider(bURL.Host)
 
-	session := &sessions.SessionState{AccessToken: "imaginary_access_token"}
-	email, err := p.GetEmailAddress(session)
+	session := CreateAuthorizedSession()
+	email, err := p.GetEmailAddress(context.Background(), session)
 	assert.Equal(t, "type assertion to string failed", err.Error())
 	assert.Equal(t, "", email)
+}
+
+func TestAzureProviderRedeemReturnsIdToken(t *testing.T) {
+	b := testAzureBackend(`{ "id_token": "testtoken1234", "expires_on": "1136239445", "refresh_token": "refresh1234" }`)
+	defer b.Close()
+	timestamp, err := time.Parse(time.RFC3339, "2006-01-02T22:04:05Z")
+	assert.Equal(t, nil, err)
+
+	bURL, _ := url.Parse(b.URL)
+	p := testAzureProvider(bURL.Host)
+	p.Data().RedeemURL.Path = "/common/oauth2/token"
+	s, err := p.Redeem(context.Background(), "https://localhost", "1234")
+	assert.Equal(t, nil, err)
+	assert.Equal(t, "testtoken1234", s.IDToken)
+	assert.Equal(t, timestamp, s.ExpiresOn.UTC())
+	assert.Equal(t, "refresh1234", s.RefreshToken)
 }

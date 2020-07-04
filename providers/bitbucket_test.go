@@ -1,6 +1,7 @@
 package providers
 
 import (
+	"context"
 	"log"
 	"net/http"
 	"net/http/httptest"
@@ -9,7 +10,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
-	"github.com/pusher/oauth2_proxy/pkg/apis/sessions"
+	"github.com/oauth2-proxy/oauth2-proxy/pkg/apis/sessions"
 )
 
 func testBitbucketProvider(hostname, team string, repository string) *BitbucketProvider {
@@ -51,7 +52,7 @@ func testBitbucketBackend(payload string) *httptest.Server {
 			if !paths[url.Path] {
 				log.Printf("%s not in %+v\n", url.Path, paths)
 				w.WriteHeader(404)
-			} else if r.URL.Query().Get("access_token") != "imaginary_access_token" {
+			} else if !IsAuthorizedInURL(r.URL) {
 				w.WriteHeader(403)
 			} else {
 				w.WriteHeader(200)
@@ -119,8 +120,8 @@ func TestBitbucketProviderGetEmailAddress(t *testing.T) {
 	bURL, _ := url.Parse(b.URL)
 	p := testBitbucketProvider(bURL.Host, "", "")
 
-	session := &sessions.SessionState{AccessToken: "imaginary_access_token"}
-	email, err := p.GetEmailAddress(session)
+	session := CreateAuthorizedSession()
+	email, err := p.GetEmailAddress(context.Background(), session)
 	assert.Equal(t, nil, err)
 	assert.Equal(t, "michael.bland@gsa.gov", email)
 }
@@ -132,8 +133,8 @@ func TestBitbucketProviderGetEmailAddressAndGroup(t *testing.T) {
 	bURL, _ := url.Parse(b.URL)
 	p := testBitbucketProvider(bURL.Host, "bioinformatics", "")
 
-	session := &sessions.SessionState{AccessToken: "imaginary_access_token"}
-	email, err := p.GetEmailAddress(session)
+	session := CreateAuthorizedSession()
+	email, err := p.GetEmailAddress(context.Background(), session)
 	assert.Equal(t, nil, err)
 	assert.Equal(t, "michael.bland@gsa.gov", email)
 }
@@ -151,7 +152,7 @@ func TestBitbucketProviderGetEmailAddressFailedRequest(t *testing.T) {
 	// token. Alternatively, we could allow the parsing of the payload as
 	// JSON to fail.
 	session := &sessions.SessionState{AccessToken: "unexpected_access_token"}
-	email, err := p.GetEmailAddress(session)
+	email, err := p.GetEmailAddress(context.Background(), session)
 	assert.NotEqual(t, nil, err)
 	assert.Equal(t, "", email)
 }
@@ -163,8 +164,8 @@ func TestBitbucketProviderGetEmailAddressEmailNotPresentInPayload(t *testing.T) 
 	bURL, _ := url.Parse(b.URL)
 	p := testBitbucketProvider(bURL.Host, "", "")
 
-	session := &sessions.SessionState{AccessToken: "imaginary_access_token"}
-	email, err := p.GetEmailAddress(session)
+	session := CreateAuthorizedSession()
+	email, err := p.GetEmailAddress(context.Background(), session)
 	assert.Equal(t, "", email)
 	assert.Equal(t, nil, err)
 }

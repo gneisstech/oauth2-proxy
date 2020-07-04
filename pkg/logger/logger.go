@@ -3,7 +3,6 @@ package logger
 import (
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -76,6 +75,9 @@ type reqLogMessageData struct {
 	Username string
 }
 
+// Returns the apparent "real client IP" as a string.
+type GetClientFunc = func(r *http.Request) string
+
 // A Logger represents an active logging object that generates lines of
 // output to an io.Writer passed through a formatter. Each logging
 // operation makes a single call to the Writer's Write method. A Logger
@@ -88,6 +90,7 @@ type Logger struct {
 	stdEnabled     bool
 	authEnabled    bool
 	reqEnabled     bool
+	getClientFunc  GetClientFunc
 	excludePaths   map[string]struct{}
 	stdLogTemplate *template.Template
 	authTemplate   *template.Template
@@ -102,6 +105,7 @@ func New(flag int) *Logger {
 		stdEnabled:     true,
 		authEnabled:    true,
 		reqEnabled:     true,
+		getClientFunc:  func(r *http.Request) string { return r.RemoteAddr },
 		excludePaths:   nil,
 		stdLogTemplate: template.Must(template.New("std-log").Parse(DefaultStandardLoggingFormat)),
 		authTemplate:   template.Must(template.New("auth-log").Parse(DefaultAuthLoggingFormat)),
@@ -137,10 +141,10 @@ func (l *Logger) Output(calldepth int, message string) {
 	l.writer.Write([]byte("\n"))
 }
 
-// PrintAuth writes auth info to the logger. Requires an http.Request to
+// PrintAuthf writes auth info to the logger. Requires an http.Request to
 // log request details. Remaining arguments are handled in the manner of
 // fmt.Sprintf. Writes a final newline to the end of every message.
-func (l *Logger) PrintAuth(username string, req *http.Request, status AuthStatus, format string, a ...interface{}) {
+func (l *Logger) PrintAuthf(username string, req *http.Request, status AuthStatus, format string, a ...interface{}) {
 	if !l.authEnabled {
 		return
 	}
@@ -151,7 +155,7 @@ func (l *Logger) PrintAuth(username string, req *http.Request, status AuthStatus
 		username = "-"
 	}
 
-	client := GetClient(req)
+	client := l.getClientFunc(req)
 
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -164,7 +168,7 @@ func (l *Logger) PrintAuth(username string, req *http.Request, status AuthStatus
 		Timestamp:     FormatTimestamp(now),
 		UserAgent:     fmt.Sprintf("%q", req.UserAgent()),
 		Username:      username,
-		Status:        fmt.Sprintf("%s", status),
+		Status:        string(status),
 		Message:       fmt.Sprintf(format, a...),
 	})
 
@@ -183,7 +187,7 @@ func (l *Logger) PrintReq(username, upstream string, req *http.Request, url url.
 		return
 	}
 
-	duration := float64(time.Now().Sub(ts)) / float64(time.Second)
+	duration := float64(time.Since(ts)) / float64(time.Second)
 
 	if username == "" {
 		username = "-"
@@ -199,7 +203,7 @@ func (l *Logger) PrintReq(username, upstream string, req *http.Request, url url.
 		}
 	}
 
-	client := GetClient(req)
+	client := l.getClientFunc(req)
 
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -250,20 +254,6 @@ func (l *Logger) GetFileLineString(calldepth int) string {
 	return fmt.Sprintf("%s:%d", file, line)
 }
 
-// GetClient parses an HTTP request for the client/remote IP address.
-func GetClient(req *http.Request) string {
-	client := req.Header.Get("X-Real-IP")
-	if client == "" {
-		client = req.RemoteAddr
-	}
-
-	if c, _, err := net.SplitHostPort(client); err == nil {
-		client = c
-	}
-
-	return client
-}
-
 // FormatTimestamp returns a formatted timestamp.
 func (l *Logger) FormatTimestamp(ts time.Time) string {
 	if l.flag&LUTC != 0 {
@@ -306,6 +296,13 @@ func (l *Logger) SetReqEnabled(e bool) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.reqEnabled = e
+}
+
+// SetGetClientFunc sets the function which determines the apparent "real client IP".
+func (l *Logger) SetGetClientFunc(f GetClientFunc) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.getClientFunc = f
 }
 
 // SetExcludePaths sets the paths to exclude from logging.
@@ -379,6 +376,12 @@ func SetAuthEnabled(e bool) {
 // standard logger.
 func SetReqEnabled(e bool) {
 	std.SetReqEnabled(e)
+}
+
+// SetGetClientFunc sets the function which determines the apparent IP address
+// set by a reverse proxy for the standard logger.
+func SetGetClientFunc(f GetClientFunc) {
+	std.SetGetClientFunc(f)
 }
 
 // SetExcludePaths sets the path to exclude from logging, eg: health checks
@@ -464,7 +467,7 @@ func Panicln(v ...interface{}) {
 // PrintAuthf writes authentication details to the standard logger.
 // Arguments are handled in the manner of fmt.Printf.
 func PrintAuthf(username string, req *http.Request, status AuthStatus, format string, a ...interface{}) {
-	std.PrintAuth(username, req, status, format, a...)
+	std.PrintAuthf(username, req, status, format, a...)
 }
 
 // PrintReq writes request details to the standard logger.

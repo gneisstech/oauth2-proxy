@@ -1,6 +1,7 @@
 package requests
 
 import (
+	"context"
 	"io/ioutil"
 	"net/http"
 	"net/http/httptest"
@@ -8,20 +9,21 @@ import (
 	"testing"
 
 	"github.com/bitly/go-simplejson"
-
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
-func testBackend(responseCode int, payload string) *httptest.Server {
+func testBackend(t *testing.T, responseCode int, payload string) *httptest.Server {
 	return httptest.NewServer(http.HandlerFunc(
 		func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(responseCode)
-			w.Write([]byte(payload))
+			_, err := w.Write([]byte(payload))
+			require.NoError(t, err)
 		}))
 }
 
 func TestRequest(t *testing.T) {
-	backend := testBackend(200, "{\"foo\": \"bar\"}")
+	backend := testBackend(t, 200, "{\"foo\": \"bar\"}")
 	defer backend.Close()
 
 	req, _ := http.NewRequest("GET", backend.URL, nil)
@@ -35,7 +37,7 @@ func TestRequest(t *testing.T) {
 func TestRequestFailure(t *testing.T) {
 	// Create a backend to generate a test URL, then close it to cause a
 	// connection error.
-	backend := testBackend(200, "{\"foo\": \"bar\"}")
+	backend := testBackend(t, 200, "{\"foo\": \"bar\"}")
 	backend.Close()
 
 	req, err := http.NewRequest("GET", backend.URL, nil)
@@ -49,7 +51,7 @@ func TestRequestFailure(t *testing.T) {
 }
 
 func TestHttpErrorCode(t *testing.T) {
-	backend := testBackend(404, "{\"foo\": \"bar\"}")
+	backend := testBackend(t, 404, "{\"foo\": \"bar\"}")
 	defer backend.Close()
 
 	req, err := http.NewRequest("GET", backend.URL, nil)
@@ -60,7 +62,7 @@ func TestHttpErrorCode(t *testing.T) {
 }
 
 func TestJsonParsingError(t *testing.T) {
-	backend := testBackend(200, "not well-formed JSON")
+	backend := testBackend(t, 200, "not well-formed JSON")
 	defer backend.Close()
 
 	req, err := http.NewRequest("GET", backend.URL, nil)
@@ -77,7 +79,8 @@ func TestRequestUnparsedResponseUsingAccessTokenParameter(t *testing.T) {
 			token := r.FormValue("access_token")
 			if r.URL.Path == "/" && token == "my_token" {
 				w.WriteHeader(200)
-				w.Write([]byte("some payload"))
+				_, err := w.Write([]byte("some payload"))
+				require.NoError(t, err)
 			} else {
 				w.WriteHeader(403)
 			}
@@ -85,22 +88,23 @@ func TestRequestUnparsedResponseUsingAccessTokenParameter(t *testing.T) {
 	defer backend.Close()
 
 	response, err := RequestUnparsedResponse(
-		backend.URL+"?access_token=my_token", nil)
+		context.Background(), backend.URL+"?access_token=my_token", nil)
 	assert.Equal(t, nil, err)
+	defer response.Body.Close()
+
 	assert.Equal(t, 200, response.StatusCode)
 	body, err := ioutil.ReadAll(response.Body)
 	assert.Equal(t, nil, err)
-	response.Body.Close()
 	assert.Equal(t, "some payload", string(body))
 }
 
 func TestRequestUnparsedResponseUsingAccessTokenParameterFailedResponse(t *testing.T) {
-	backend := testBackend(200, "some payload")
+	backend := testBackend(t, 200, "some payload")
 	// Close the backend now to force a request failure.
 	backend.Close()
 
 	response, err := RequestUnparsedResponse(
-		backend.URL+"?access_token=my_token", nil)
+		context.Background(), backend.URL+"?access_token=my_token", nil)
 	assert.NotEqual(t, nil, err)
 	assert.Equal(t, (*http.Response)(nil), response)
 }
@@ -110,7 +114,8 @@ func TestRequestUnparsedResponseUsingHeaders(t *testing.T) {
 		func(w http.ResponseWriter, r *http.Request) {
 			if r.URL.Path == "/" && r.Header["Auth"][0] == "my_token" {
 				w.WriteHeader(200)
-				w.Write([]byte("some payload"))
+				_, err := w.Write([]byte("some payload"))
+				require.NoError(t, err)
 			} else {
 				w.WriteHeader(403)
 			}
@@ -119,11 +124,13 @@ func TestRequestUnparsedResponseUsingHeaders(t *testing.T) {
 
 	headers := make(http.Header)
 	headers.Set("Auth", "my_token")
-	response, err := RequestUnparsedResponse(backend.URL, headers)
+	response, err := RequestUnparsedResponse(context.Background(), backend.URL, headers)
 	assert.Equal(t, nil, err)
+	defer response.Body.Close()
+
 	assert.Equal(t, 200, response.StatusCode)
 	body, err := ioutil.ReadAll(response.Body)
 	assert.Equal(t, nil, err)
-	response.Body.Close()
+
 	assert.Equal(t, "some payload", string(body))
 }

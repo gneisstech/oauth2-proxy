@@ -10,20 +10,22 @@ import (
 	"testing"
 	"time"
 
-	"github.com/alicebob/miniredis"
+	miniredis "github.com/alicebob/miniredis/v2"
+	"github.com/oauth2-proxy/oauth2-proxy/pkg/apis/options"
+	sessionsapi "github.com/oauth2-proxy/oauth2-proxy/pkg/apis/sessions"
+	cookiesapi "github.com/oauth2-proxy/oauth2-proxy/pkg/cookies"
+	"github.com/oauth2-proxy/oauth2-proxy/pkg/encryption"
+	"github.com/oauth2-proxy/oauth2-proxy/pkg/logger"
+	"github.com/oauth2-proxy/oauth2-proxy/pkg/sessions"
+	sessionscookie "github.com/oauth2-proxy/oauth2-proxy/pkg/sessions/cookie"
+	"github.com/oauth2-proxy/oauth2-proxy/pkg/sessions/redis"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
-	"github.com/pusher/oauth2_proxy/pkg/apis/options"
-	sessionsapi "github.com/pusher/oauth2_proxy/pkg/apis/sessions"
-	"github.com/pusher/oauth2_proxy/pkg/cookies"
-	"github.com/pusher/oauth2_proxy/pkg/encryption"
-	"github.com/pusher/oauth2_proxy/pkg/sessions"
-	sessionscookie "github.com/pusher/oauth2_proxy/pkg/sessions/cookie"
-	"github.com/pusher/oauth2_proxy/pkg/sessions/redis"
-	"github.com/pusher/oauth2_proxy/pkg/sessions/utils"
 )
 
 func TestSessionStore(t *testing.T) {
+	logger.SetOutput(GinkgoWriter)
+
 	RegisterFailHandler(Fail)
 	RunSpecs(t, "SessionStore")
 }
@@ -47,35 +49,45 @@ var _ = Describe("NewSessionStore", func() {
 
 			It("have the correct name set", func() {
 				if len(cookies) == 1 {
-					Expect(cookies[0].Name).To(Equal(cookieOpts.CookieName))
+					Expect(cookies[0].Name).To(Equal(cookieOpts.Name))
 				} else {
 					for _, cookie := range cookies {
-						Expect(cookie.Name).To(ContainSubstring(cookieOpts.CookieName))
+						Expect(cookie.Name).To(ContainSubstring(cookieOpts.Name))
 					}
 				}
 			})
 
 			It("have the correct path set", func() {
 				for _, cookie := range cookies {
-					Expect(cookie.Path).To(Equal(cookieOpts.CookiePath))
+					Expect(cookie.Path).To(Equal(cookieOpts.Path))
 				}
 			})
 
 			It("have the correct domain set", func() {
 				for _, cookie := range cookies {
-					Expect(cookie.Domain).To(Equal(cookieOpts.CookieDomain))
+					specifiedDomain := ""
+					if len(cookieOpts.Domains) > 0 {
+						specifiedDomain = cookieOpts.Domains[0]
+					}
+					Expect(cookie.Domain).To(Equal(specifiedDomain))
 				}
 			})
 
 			It("have the correct HTTPOnly set", func() {
 				for _, cookie := range cookies {
-					Expect(cookie.HttpOnly).To(Equal(cookieOpts.CookieHTTPOnly))
+					Expect(cookie.HttpOnly).To(Equal(cookieOpts.HTTPOnly))
 				}
 			})
 
 			It("have the correct secure set", func() {
 				for _, cookie := range cookies {
-					Expect(cookie.Secure).To(Equal(cookieOpts.CookieSecure))
+					Expect(cookie.Secure).To(Equal(cookieOpts.Secure))
+				}
+			})
+
+			It("have the correct SameSite set", func() {
+				for _, cookie := range cookies {
+					Expect(cookie.SameSite).To(Equal(cookiesapi.ParseSameSite(cookieOpts.SameSite)))
 				}
 			})
 
@@ -158,8 +170,8 @@ var _ = Describe("NewSessionStore", func() {
 				BeforeEach(func() {
 					By("Using a valid cookie with a different providers session encoding")
 					broken := "BrokenSessionFromADifferentSessionImplementation"
-					value := encryption.SignedValue(cookieOpts.CookieSecret, cookieOpts.CookieName, broken, time.Now())
-					cookie := cookies.MakeCookieFromOptions(request, cookieOpts.CookieName, value, cookieOpts, cookieOpts.CookieExpire, time.Now())
+					value := encryption.SignedValue(cookieOpts.Secret, cookieOpts.Name, []byte(broken), time.Now())
+					cookie := cookiesapi.MakeCookieFromOptions(request, cookieOpts.Name, value, cookieOpts, cookieOpts.Expire, time.Now())
 					request.AddCookie(cookie)
 
 					err := ss.Save(response, request, session)
@@ -235,7 +247,7 @@ var _ = Describe("NewSessionStore", func() {
 				})
 
 				It("loads a session equal to the original session", func() {
-					if cookieOpts.CookieSecret == "" {
+					if cookieOpts.Secret == "" {
 						// Only Email and User stored in session when encrypted
 						Expect(loadedSession.Email).To(Equal(session.Email))
 						Expect(loadedSession.User).To(Equal(session.User))
@@ -244,16 +256,16 @@ var _ = Describe("NewSessionStore", func() {
 
 						// Can't compare time.Time using Equal() so remove ExpiresOn from sessions
 						l := *loadedSession
-						l.CreatedAt = time.Time{}
-						l.ExpiresOn = time.Time{}
+						l.CreatedAt = nil
+						l.ExpiresOn = nil
 						s := *session
-						s.CreatedAt = time.Time{}
-						s.ExpiresOn = time.Time{}
+						s.CreatedAt = nil
+						s.ExpiresOn = nil
 						Expect(l).To(Equal(s))
 
 						// Compare time.Time separately
-						Expect(loadedSession.CreatedAt.Equal(session.CreatedAt)).To(BeTrue())
-						Expect(loadedSession.ExpiresOn.Equal(session.ExpiresOn)).To(BeTrue())
+						Expect(loadedSession.CreatedAt.Equal(*session.CreatedAt)).To(BeTrue())
+						Expect(loadedSession.ExpiresOn.Equal(*session.ExpiresOn)).To(BeTrue())
 					}
 				})
 			}
@@ -280,7 +292,7 @@ var _ = Describe("NewSessionStore", func() {
 					BeforeEach(func() {
 						switch ss.(type) {
 						case *redis.SessionStore:
-							mr.FastForward(cookieOpts.CookieRefresh + time.Minute)
+							mr.FastForward(cookieOpts.Refresh + time.Minute)
 						}
 					})
 
@@ -294,7 +306,7 @@ var _ = Describe("NewSessionStore", func() {
 					BeforeEach(func() {
 						switch ss.(type) {
 						case *redis.SessionStore:
-							mr.FastForward(cookieOpts.CookieExpire + time.Minute)
+							mr.FastForward(cookieOpts.Expire + time.Minute)
 						}
 
 						loadedSession, err = ss.Load(request)
@@ -331,13 +343,14 @@ var _ = Describe("NewSessionStore", func() {
 		Context("with non-default options", func() {
 			BeforeEach(func() {
 				cookieOpts = &options.CookieOptions{
-					CookieName:     "_cookie_name",
-					CookiePath:     "/path",
-					CookieExpire:   time.Duration(72) * time.Hour,
-					CookieRefresh:  time.Duration(2) * time.Hour,
-					CookieSecure:   false,
-					CookieHTTPOnly: false,
-					CookieDomain:   "example.com",
+					Name:     "_cookie_name",
+					Path:     "/path",
+					Expire:   time.Duration(72) * time.Hour,
+					Refresh:  time.Duration(2) * time.Hour,
+					Secure:   false,
+					HTTPOnly: false,
+					Domains:  []string{"example.com"},
+					SameSite: "strict",
 				}
 
 				var err error
@@ -353,8 +366,8 @@ var _ = Describe("NewSessionStore", func() {
 				secret := make([]byte, 32)
 				_, err := rand.Read(secret)
 				Expect(err).ToNot(HaveOccurred())
-				cookieOpts.CookieSecret = base64.URLEncoding.EncodeToString(secret)
-				cipher, err := encryption.NewCipher(utils.SecretBytes(cookieOpts.CookieSecret))
+				cookieOpts.Secret = base64.URLEncoding.EncodeToString(secret)
+				cipher, err := encryption.NewBase64Cipher(encryption.NewCFBCipher, encryption.SecretBytes(cookieOpts.Secret))
 				Expect(err).ToNot(HaveOccurred())
 				Expect(cipher).ToNot(BeNil())
 				opts.Cipher = cipher
@@ -373,18 +386,20 @@ var _ = Describe("NewSessionStore", func() {
 
 		// Set default options in CookieOptions
 		cookieOpts = &options.CookieOptions{
-			CookieName:     "_oauth2_proxy",
-			CookiePath:     "/",
-			CookieExpire:   time.Duration(168) * time.Hour,
-			CookieRefresh:  time.Duration(1) * time.Hour,
-			CookieSecure:   true,
-			CookieHTTPOnly: true,
+			Name:     "_oauth2_proxy",
+			Path:     "/",
+			Expire:   time.Duration(168) * time.Hour,
+			Refresh:  time.Duration(1) * time.Hour,
+			Secure:   true,
+			HTTPOnly: true,
+			SameSite: "",
 		}
 
+		expires := time.Now().Add(1 * time.Hour)
 		session = &sessionsapi.SessionState{
 			AccessToken:  "AccessToken",
 			IDToken:      "IDToken",
-			ExpiresOn:    time.Now().Add(1 * time.Hour),
+			ExpiresOn:    &expires,
 			RefreshToken: "RefreshToken",
 			Email:        "john.doe@example.com",
 			User:         "john.doe",
@@ -416,7 +431,7 @@ var _ = Describe("NewSessionStore", func() {
 			mr, err = miniredis.Run()
 			Expect(err).ToNot(HaveOccurred())
 			opts.Type = options.RedisSessionStoreType
-			opts.RedisConnectionURL = "redis://" + mr.Addr()
+			opts.Redis.ConnectionURL = "redis://" + mr.Addr()
 		})
 
 		AfterEach(func() {

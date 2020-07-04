@@ -1,22 +1,26 @@
 package redis
 
 import (
+	"context"
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/hex"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"net/http"
 	"strings"
 	"time"
 
-	"github.com/go-redis/redis"
-	"github.com/pusher/oauth2_proxy/pkg/apis/options"
-	"github.com/pusher/oauth2_proxy/pkg/apis/sessions"
-	"github.com/pusher/oauth2_proxy/pkg/cookies"
-	"github.com/pusher/oauth2_proxy/pkg/encryption"
+	"github.com/go-redis/redis/v7"
+	"github.com/oauth2-proxy/oauth2-proxy/pkg/apis/options"
+	"github.com/oauth2-proxy/oauth2-proxy/pkg/apis/sessions"
+	"github.com/oauth2-proxy/oauth2-proxy/pkg/cookies"
+	"github.com/oauth2-proxy/oauth2-proxy/pkg/encryption"
+	"github.com/oauth2-proxy/oauth2-proxy/pkg/logger"
 )
 
 // TicketData is a structure representing the ticket used in server session storage
@@ -28,15 +32,15 @@ type TicketData struct {
 // SessionStore is an implementation of the sessions.SessionStore
 // interface that stores sessions in redis
 type SessionStore struct {
-	CookieCipher  *encryption.Cipher
+	CookieCipher  encryption.Cipher
 	CookieOptions *options.CookieOptions
-	Client        *redis.Client
+	Client        Client
 }
 
 // NewRedisSessionStore initialises a new instance of the SessionStore from
 // the configuration given
 func NewRedisSessionStore(opts *options.SessionOptions, cookieOpts *options.CookieOptions) (sessions.SessionStore, error) {
-	client, err := newRedisClient(opts.RedisStoreOptions)
+	client, err := newRedisCmdable(opts.Redis)
 	if err != nil {
 		return nil, fmt.Errorf("error constructing redis client: %v", err)
 	}
@@ -50,39 +54,99 @@ func NewRedisSessionStore(opts *options.SessionOptions, cookieOpts *options.Cook
 
 }
 
-func newRedisClient(opts options.RedisStoreOptions) (*redis.Client, error) {
-	if opts.UseSentinel {
-		client := redis.NewFailoverClient(&redis.FailoverOptions{
-			MasterName:    opts.SentinelMasterName,
-			SentinelAddrs: opts.SentinelConnectionURLs,
-		})
-		return client, nil
+func newRedisCmdable(opts options.RedisStoreOptions) (Client, error) {
+	if opts.UseSentinel && opts.UseCluster {
+		return nil, fmt.Errorf("options redis-use-sentinel and redis-use-cluster are mutually exclusive")
 	}
 
-	opt, err := redis.ParseURL(opts.RedisConnectionURL)
+	if opts.UseSentinel {
+		addrs, err := parseRedisURLs(opts.SentinelConnectionURLs)
+		if err != nil {
+			return nil, fmt.Errorf("could not parse redis urls: %v", err)
+		}
+		client := redis.NewFailoverClient(&redis.FailoverOptions{
+			MasterName:    opts.SentinelMasterName,
+			SentinelAddrs: addrs,
+		})
+		return newClient(client), nil
+	}
+
+	if opts.UseCluster {
+		addrs, err := parseRedisURLs(opts.ClusterConnectionURLs)
+		if err != nil {
+			return nil, fmt.Errorf("could not parse redis urls: %v", err)
+		}
+		client := redis.NewClusterClient(&redis.ClusterOptions{
+			Addrs: addrs,
+		})
+		return newClusterClient(client), nil
+	}
+
+	opt, err := redis.ParseURL(opts.ConnectionURL)
 	if err != nil {
 		return nil, fmt.Errorf("unable to parse redis url: %s", err)
 	}
 
+	if opts.InsecureSkipTLSVerify {
+		opt.TLSConfig.InsecureSkipVerify = true
+	}
+
+	if opts.CAPath != "" {
+		rootCAs, err := x509.SystemCertPool()
+		if err != nil {
+			logger.Printf("failed to load system cert pool for redis connection, falling back to empty cert pool")
+		}
+		if rootCAs == nil {
+			rootCAs = x509.NewCertPool()
+		}
+		certs, err := ioutil.ReadFile(opts.CAPath)
+		if err != nil {
+			return nil, fmt.Errorf("failed to load %q, %v", opts.CAPath, err)
+		}
+
+		// Append our cert to the system pool
+		if ok := rootCAs.AppendCertsFromPEM(certs); !ok {
+			logger.Printf("no certs appended, using system certs only")
+		}
+
+		opt.TLSConfig.RootCAs = rootCAs
+	}
+
 	client := redis.NewClient(opt)
-	return client, nil
+	return newClient(client), nil
+}
+
+// parseRedisURLs parses a list of redis urls and returns a list
+// of addresses in the form of host:port that can be used to connnect to Redis
+func parseRedisURLs(urls []string) ([]string, error) {
+	addrs := []string{}
+	for _, u := range urls {
+		parsedURL, err := redis.ParseURL(u)
+		if err != nil {
+			return nil, fmt.Errorf("unable to parse redis url: %v", err)
+		}
+		addrs = append(addrs, parsedURL.Addr)
+	}
+	return addrs, nil
 }
 
 // Save takes a sessions.SessionState and stores the information from it
 // to redies, and adds a new ticket cookie on the HTTP response writer
 func (store *SessionStore) Save(rw http.ResponseWriter, req *http.Request, s *sessions.SessionState) error {
-	if s.CreatedAt.IsZero() {
-		s.CreatedAt = time.Now()
+	if s.CreatedAt == nil || s.CreatedAt.IsZero() {
+		now := time.Now()
+		s.CreatedAt = &now
 	}
 
 	// Old sessions that we are refreshing would have a request cookie
 	// New sessions don't, so we ignore the error. storeValue will check requestCookie
-	requestCookie, _ := req.Cookie(store.CookieOptions.CookieName)
+	requestCookie, _ := req.Cookie(store.CookieOptions.Name)
 	value, err := s.EncodeSessionState(store.CookieCipher)
 	if err != nil {
 		return err
 	}
-	ticketString, err := store.storeValue(value, store.CookieOptions.CookieExpire, requestCookie)
+	ctx := req.Context()
+	ticketString, err := store.storeValue(ctx, value, store.CookieOptions.Expire, requestCookie)
 	if err != nil {
 		return err
 	}
@@ -90,8 +154,8 @@ func (store *SessionStore) Save(rw http.ResponseWriter, req *http.Request, s *se
 	ticketCookie := store.makeCookie(
 		req,
 		ticketString,
-		store.CookieOptions.CookieExpire,
-		s.CreatedAt,
+		store.CookieOptions.Expire,
+		*s.CreatedAt,
 	)
 
 	http.SetCookie(rw, ticketCookie)
@@ -101,16 +165,17 @@ func (store *SessionStore) Save(rw http.ResponseWriter, req *http.Request, s *se
 // Load reads sessions.SessionState information from a ticket
 // cookie within the HTTP request object
 func (store *SessionStore) Load(req *http.Request) (*sessions.SessionState, error) {
-	requestCookie, err := req.Cookie(store.CookieOptions.CookieName)
+	requestCookie, err := req.Cookie(store.CookieOptions.Name)
 	if err != nil {
 		return nil, fmt.Errorf("error loading session: %s", err)
 	}
 
-	val, _, ok := encryption.Validate(requestCookie, store.CookieOptions.CookieSecret, store.CookieOptions.CookieExpire)
+	val, _, ok := encryption.Validate(requestCookie, store.CookieOptions.Secret, store.CookieOptions.Expire)
 	if !ok {
-		return nil, fmt.Errorf("Cookie Signature not valid")
+		return nil, fmt.Errorf("cookie signature not valid")
 	}
-	session, err := store.loadSessionFromString(val)
+	ctx := req.Context()
+	session, err := store.loadSessionFromString(ctx, string(val))
 	if err != nil {
 		return nil, fmt.Errorf("error loading session: %s", err)
 	}
@@ -118,18 +183,17 @@ func (store *SessionStore) Load(req *http.Request) (*sessions.SessionState, erro
 }
 
 // loadSessionFromString loads the session based on the ticket value
-func (store *SessionStore) loadSessionFromString(value string) (*sessions.SessionState, error) {
-	ticket, err := decodeTicket(store.CookieOptions.CookieName, value)
+func (store *SessionStore) loadSessionFromString(ctx context.Context, value string) (*sessions.SessionState, error) {
+	ticket, err := decodeTicket(store.CookieOptions.Name, value)
 	if err != nil {
 		return nil, err
 	}
 
-	result, err := store.Client.Get(ticket.asHandle(store.CookieOptions.CookieName)).Result()
+	resultBytes, err := store.Client.Get(ctx, ticket.asHandle(store.CookieOptions.Name))
 	if err != nil {
 		return nil, err
 	}
 
-	resultBytes := []byte(result)
 	block, err := aes.NewCipher(ticket.Secret)
 	if err != nil {
 		return nil, err
@@ -158,7 +222,7 @@ func (store *SessionStore) Clear(rw http.ResponseWriter, req *http.Request) erro
 	http.SetCookie(rw, clearCookie)
 
 	// If there was an existing cookie we should clear the session in redis
-	requestCookie, err := req.Cookie(store.CookieOptions.CookieName)
+	requestCookie, err := req.Cookie(store.CookieOptions.Name)
 	if err != nil && err == http.ErrNoCookie {
 		// No existing cookie so can't clear redis
 		return nil
@@ -166,16 +230,17 @@ func (store *SessionStore) Clear(rw http.ResponseWriter, req *http.Request) erro
 		return fmt.Errorf("error retrieving cookie: %v", err)
 	}
 
-	val, _, ok := encryption.Validate(requestCookie, store.CookieOptions.CookieSecret, store.CookieOptions.CookieExpire)
+	val, _, ok := encryption.Validate(requestCookie, store.CookieOptions.Secret, store.CookieOptions.Expire)
 	if !ok {
-		return fmt.Errorf("Cookie Signature not valid")
+		return fmt.Errorf("cookie signature not valid")
 	}
 
 	// We only return an error if we had an issue with redis
 	// If there's an issue decoding the ticket, ignore it
-	ticket, _ := decodeTicket(store.CookieOptions.CookieName, val)
+	ticket, _ := decodeTicket(store.CookieOptions.Name, string(val))
 	if ticket != nil {
-		_, err := store.Client.Del(ticket.asHandle(store.CookieOptions.CookieName)).Result()
+		ctx := req.Context()
+		err := store.Client.Del(ctx, ticket.asHandle(store.CookieOptions.Name))
 		if err != nil {
 			return fmt.Errorf("error clearing cookie from redis: %s", err)
 		}
@@ -186,11 +251,11 @@ func (store *SessionStore) Clear(rw http.ResponseWriter, req *http.Request) erro
 // makeCookie makes a cookie, signing the value if present
 func (store *SessionStore) makeCookie(req *http.Request, value string, expires time.Duration, now time.Time) *http.Cookie {
 	if value != "" {
-		value = encryption.SignedValue(store.CookieOptions.CookieSecret, store.CookieOptions.CookieName, value, now)
+		value = encryption.SignedValue(store.CookieOptions.Secret, store.CookieOptions.Name, []byte(value), now)
 	}
 	return cookies.MakeCookieFromOptions(
 		req,
-		store.CookieOptions.CookieName,
+		store.CookieOptions.Name,
 		value,
 		store.CookieOptions,
 		expires,
@@ -198,7 +263,7 @@ func (store *SessionStore) makeCookie(req *http.Request, value string, expires t
 	)
 }
 
-func (store *SessionStore) storeValue(value string, expiration time.Duration, requestCookie *http.Cookie) (string, error) {
+func (store *SessionStore) storeValue(ctx context.Context, value string, expiration time.Duration, requestCookie *http.Cookie) (string, error) {
 	ticket, err := store.getTicket(requestCookie)
 	if err != nil {
 		return "", fmt.Errorf("error getting ticket: %v", err)
@@ -214,12 +279,12 @@ func (store *SessionStore) storeValue(value string, expiration time.Duration, re
 	stream := cipher.NewCFBEncrypter(block, ticket.Secret)
 	stream.XORKeyStream(ciphertext, []byte(value))
 
-	handle := ticket.asHandle(store.CookieOptions.CookieName)
-	err = store.Client.Set(handle, ciphertext, expiration).Err()
+	handle := ticket.asHandle(store.CookieOptions.Name)
+	err = store.Client.Set(ctx, handle, ciphertext, expiration)
 	if err != nil {
 		return "", err
 	}
-	return ticket.encodeTicket(store.CookieOptions.CookieName), nil
+	return ticket.encodeTicket(store.CookieOptions.Name), nil
 }
 
 // getTicket retrieves an existing ticket from the cookie if present,
@@ -230,14 +295,14 @@ func (store *SessionStore) getTicket(requestCookie *http.Cookie) (*TicketData, e
 	}
 
 	// An existing cookie exists, try to retrieve the ticket
-	val, _, ok := encryption.Validate(requestCookie, store.CookieOptions.CookieSecret, store.CookieOptions.CookieExpire)
+	val, _, ok := encryption.Validate(requestCookie, store.CookieOptions.Secret, store.CookieOptions.Expire)
 	if !ok {
 		// Cookie is invalid, create a new ticket
 		return newTicket()
 	}
 
 	// Valid cookie, decode the ticket
-	ticket, err := decodeTicket(store.CookieOptions.CookieName, val)
+	ticket, err := decodeTicket(store.CookieOptions.Name, string(val))
 	if err != nil {
 		// If we can't decode the ticket we have to create a new one
 		return newTicket()
@@ -251,7 +316,7 @@ func newTicket() (*TicketData, error) {
 		return nil, fmt.Errorf("failed to create new ticket ID %s", err)
 	}
 	// ticketID is hex encoded
-	ticketID := fmt.Sprintf("%x", rawID)
+	ticketID := hex.EncodeToString(rawID)
 
 	secret := make([]byte, aes.BlockSize)
 	if _, err := io.ReadFull(rand.Reader, secret); err != nil {

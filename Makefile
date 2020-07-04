@@ -1,7 +1,21 @@
-include .env
-BINARY := oauth2_proxy
+GO ?= go
+GOLANGCILINT ?= golangci-lint
+
+BINARY := oauth2-proxy
 VERSION := $(shell git describe --always --dirty --tags 2>/dev/null || echo "undefined")
+# Allow to override image registry.
+REGISTRY ?= quay.io/oauth2-proxy
 .NOTPARALLEL:
+
+GO_MAJOR_VERSION = $(shell $(GO) version | cut -c 14- | cut -d' ' -f1 | cut -d'.' -f1)
+GO_MINOR_VERSION = $(shell $(GO) version | cut -c 14- | cut -d' ' -f1 | cut -d'.' -f2)
+MINIMUM_SUPPORTED_GO_MAJOR_VERSION = 1
+MINIMUM_SUPPORTED_GO_MINOR_VERSION = 14
+GO_VERSION_VALIDATION_ERR_MSG = Golang version is not supported, please update to at least $(MINIMUM_SUPPORTED_GO_MAJOR_VERSION).$(MINIMUM_SUPPORTED_GO_MINOR_VERSION)
+
+ifeq ($(COVER),true)
+TESTCOVER ?= -coverprofile c.out
+endif
 
 .PHONY: all
 all: lint $(BINARY)
@@ -16,72 +30,69 @@ distclean: clean
 	rm -rf vendor
 
 .PHONY: lint
-lint:
+lint: validate-go-version
 	GO111MODULE=on $(GOLANGCILINT) run
 
 .PHONY: build
-build: clean $(BINARY)
+build: validate-go-version clean $(BINARY)
 
 $(BINARY):
-	GO111MODULE=on CGO_ENABLED=0 $(GO) build -a -installsuffix cgo -ldflags="-X main.VERSION=${VERSION}" -o $@ github.com/pusher/oauth2_proxy
+	GO111MODULE=on CGO_ENABLED=0 $(GO) build -a -installsuffix cgo -ldflags="-X main.VERSION=${VERSION}" -o $@ github.com/oauth2-proxy/oauth2-proxy
 
 .PHONY: docker
 docker:
-	docker build -f Dockerfile -t quay.io/pusher/oauth2_proxy:latest .
+	docker build -f Dockerfile -t $(REGISTRY)/oauth2-proxy:latest .
 
 .PHONY: docker-all
 docker-all: docker
-	docker build -f Dockerfile -t quay.io/pusher/oauth2_proxy:latest-amd64 .
-	docker build -f Dockerfile -t quay.io/pusher/oauth2_proxy:${VERSION} .
-	docker build -f Dockerfile -t quay.io/pusher/oauth2_proxy:${VERSION}-amd64 .
-	docker build -f Dockerfile.arm64 -t quay.io/pusher/oauth2_proxy:latest-arm64 .
-	docker build -f Dockerfile.arm64 -t quay.io/pusher/oauth2_proxy:${VERSION}-arm64 .
-	docker build -f Dockerfile.armv6 -t quay.io/pusher/oauth2_proxy:latest-armv6 .
-	docker build -f Dockerfile.armv6 -t quay.io/pusher/oauth2_proxy:${VERSION}-armv6 .
+	docker build -f Dockerfile -t $(REGISTRY)/oauth2-proxy:latest-amd64 .
+	docker build -f Dockerfile -t $(REGISTRY)/oauth2-proxy:${VERSION} .
+	docker build -f Dockerfile -t $(REGISTRY)/oauth2-proxy:${VERSION}-amd64 .
+	docker build -f Dockerfile.arm64 -t $(REGISTRY)/oauth2-proxy:latest-arm64 .
+	docker build -f Dockerfile.arm64 -t $(REGISTRY)/oauth2-proxy:${VERSION}-arm64 .
+	docker build -f Dockerfile.armv6 -t $(REGISTRY)/oauth2-proxy:latest-armv6 .
+	docker build -f Dockerfile.armv6 -t $(REGISTRY)/oauth2-proxy:${VERSION}-armv6 .
 
 .PHONY: docker-push
 docker-push:
-	docker push quay.io/pusher/oauth2_proxy:latest
+	docker push $(REGISTRY)/oauth2-proxy:latest
 
 .PHONY: docker-push-all
 docker-push-all: docker-push
-	docker push quay.io/pusher/oauth2_proxy:latest-amd64
-	docker push quay.io/pusher/oauth2_proxy:${VERSION}
-	docker push quay.io/pusher/oauth2_proxy:${VERSION}-amd64
-	docker push quay.io/pusher/oauth2_proxy:latest-arm64
-	docker push quay.io/pusher/oauth2_proxy:${VERSION}-arm64
-	docker push quay.io/pusher/oauth2_proxy:latest-armv6
-	docker push quay.io/pusher/oauth2_proxy:${VERSION}-armv6
+	docker push $(REGISTRY)/oauth2-proxy:latest-amd64
+	docker push $(REGISTRY)/oauth2-proxy:${VERSION}
+	docker push $(REGISTRY)/oauth2-proxy:${VERSION}-amd64
+	docker push $(REGISTRY)/oauth2-proxy:latest-arm64
+	docker push $(REGISTRY)/oauth2-proxy:${VERSION}-arm64
+	docker push $(REGISTRY)/oauth2-proxy:latest-armv6
+	docker push $(REGISTRY)/oauth2-proxy:${VERSION}-armv6
 
 .PHONY: test
 test: lint
-	GO111MODULE=on $(GO) test -v -race ./...
+	GO111MODULE=on $(GO) test $(TESTCOVER) -v -race ./...
 
 .PHONY: release
 release: lint test
-	mkdir release
-	mkdir release/$(BINARY)-$(VERSION).darwin-amd64.$(GO_VERSION)
-	mkdir release/$(BINARY)-$(VERSION).linux-amd64.$(GO_VERSION)
-	mkdir release/$(BINARY)-$(VERSION).linux-arm64.$(GO_VERSION)
-	mkdir release/$(BINARY)-$(VERSION).linux-armv6.$(GO_VERSION)
-	mkdir release/$(BINARY)-$(VERSION).windows-amd64.$(GO_VERSION)
-	GO111MODULE=on GOOS=darwin GOARCH=amd64 go build -ldflags="-X main.VERSION=${VERSION}" \
-		-o release/$(BINARY)-$(VERSION).darwin-amd64.$(GO_VERSION)/$(BINARY) github.com/pusher/oauth2_proxy
-	GO111MODULE=on GOOS=linux GOARCH=amd64 go build -ldflags="-X main.VERSION=${VERSION}" \
-		-o release/$(BINARY)-$(VERSION).linux-amd64.$(GO_VERSION)/$(BINARY) github.com/pusher/oauth2_proxy
-	GO111MODULE=on GOOS=linux GOARCH=arm64 go build -ldflags="-X main.VERSION=${VERSION}" \
-		-o release/$(BINARY)-$(VERSION).linux-arm64.$(GO_VERSION)/$(BINARY) github.com/pusher/oauth2_proxy
-	GO111MODULE=on GOOS=linux GOARCH=arm GOARM=6 go build -ldflags="-X main.VERSION=${VERSION}" \
-		-o release/$(BINARY)-$(VERSION).linux-armv6.$(GO_VERSION)/$(BINARY) github.com/pusher/oauth2_proxy
-	GO111MODULE=on GOOS=windows GOARCH=amd64 go build -ldflags="-X main.VERSION=${VERSION}" \
-		-o release/$(BINARY)-$(VERSION).windows-amd64.$(GO_VERSION)/$(BINARY) github.com/pusher/oauth2_proxy
-	shasum -a 256 release/$(BINARY)-$(VERSION).darwin-amd64.$(GO_VERSION)/$(BINARY) > release/$(BINARY)-$(VERSION).darwin-amd64-sha256sum.txt
-	shasum -a 256 release/$(BINARY)-$(VERSION).linux-amd64.$(GO_VERSION)/$(BINARY) > release/$(BINARY)-$(VERSION).linux-amd64-sha256sum.txt
-	shasum -a 256 release/$(BINARY)-$(VERSION).linux-arm64.$(GO_VERSION)/$(BINARY) > release/$(BINARY)-$(VERSION).linux-arm64-sha256sum.txt
-	shasum -a 256 release/$(BINARY)-$(VERSION).linux-armv6.$(GO_VERSION)/$(BINARY) > release/$(BINARY)-$(VERSION).linux-armv6-sha256sum.txt
-	shasum -a 256 release/$(BINARY)-$(VERSION).windows-amd64.$(GO_VERSION)/$(BINARY) > release/$(BINARY)-$(VERSION).windows-amd64-sha256sum.txt
-	tar -C release -czvf release/$(BINARY)-$(VERSION).darwin-amd64.$(GO_VERSION).tar.gz $(BINARY)-$(VERSION).darwin-amd64.$(GO_VERSION)
-	tar -C release -czvf release/$(BINARY)-$(VERSION).linux-amd64.$(GO_VERSION).tar.gz $(BINARY)-$(VERSION).linux-amd64.$(GO_VERSION)
-	tar -C release -czvf release/$(BINARY)-$(VERSION).linux-arm64.$(GO_VERSION).tar.gz $(BINARY)-$(VERSION).linux-arm64.$(GO_VERSION)
-	tar -C release -czvf release/$(BINARY)-$(VERSION).linux-armv6.$(GO_VERSION).tar.gz $(BINARY)-$(VERSION).linux-armv6.$(GO_VERSION)
-	tar -C release -czvf release/$(BINARY)-$(VERSION).windows-amd64.$(GO_VERSION).tar.gz $(BINARY)-$(VERSION).windows-amd64.$(GO_VERSION)
+	BINARY=${BINARY} VERSION=${VERSION} ./dist.sh
+
+.PHONY: validate-go-version
+validate-go-version:
+	@if [ $(GO_MAJOR_VERSION) -gt $(MINIMUM_SUPPORTED_GO_MAJOR_VERSION) ]; then \
+		exit 0 ;\
+	elif [ $(GO_MAJOR_VERSION) -lt $(MINIMUM_SUPPORTED_GO_MAJOR_VERSION) ]; then \
+		echo '$(GO_VERSION_VALIDATION_ERR_MSG)';\
+		exit 1; \
+	elif [ $(GO_MINOR_VERSION) -lt $(MINIMUM_SUPPORTED_GO_MINOR_VERSION) ] ; then \
+		echo '$(GO_VERSION_VALIDATION_ERR_MSG)';\
+		exit 1; \
+	fi
+
+# local-env can be used to interact with the local development environment
+# eg:
+#    make local-env-up 					# Bring up a basic test environment
+#    make local-env-down 				# Tear down the basic test environment
+#    make local-env-nginx-up 		# Bring up an nginx based test environment
+#    make local-env-nginx-down 	# Tead down the nginx based test environment
+.PHONY: local-env-%
+local-env-%:
+	make -C contrib/local-environment $*
