@@ -14,6 +14,7 @@ import (
 	"github.com/coreos/go-oidc"
 
 	"github.com/oauth2-proxy/oauth2-proxy/pkg/apis/sessions"
+	"github.com/oauth2-proxy/oauth2-proxy/pkg/logger"
 )
 
 var _ Provider = (*ProviderData)(nil)
@@ -37,10 +38,12 @@ func (p *ProviderData) Redeem(ctx context.Context, redirectURL, code string) (s 
 	params.Add("grant_type", "authorization_code")
 	if p.ProtectedResource != nil && p.ProtectedResource.String() != "" {
 		params.Add("resource", p.ProtectedResource.String())
+		logger.Printf("  redeeming code for resource [%s]", p.ProtectedResource)
 	}
 
 	var req *http.Request
 	req, err = http.NewRequestWithContext(ctx, "POST", p.RedeemURL.String(), bytes.NewBufferString(params.Encode()))
+	logger.Printf("  redeeming via URL [%s] with params [%s]", p.RedeemURL.String(), bytes.NewBufferString(params.Encode()))
 	if err != nil {
 		return
 	}
@@ -58,6 +61,7 @@ func (p *ProviderData) Redeem(ctx context.Context, redirectURL, code string) (s 
 		return
 	}
 
+	logger.Printf("  redeem got %d from %q %s", resp.StatusCode, p.RedeemURL.String(), body)
 	if resp.StatusCode != 200 {
 		err = fmt.Errorf("got %d from %q %s", resp.StatusCode, p.RedeemURL.String(), body)
 		return
@@ -85,6 +89,7 @@ func (p *ProviderData) Redeem(ctx context.Context, redirectURL, code string) (s 
 		s = &sessions.SessionState{AccessToken: a, CreatedAt: &created}
 	} else {
 		err = fmt.Errorf("no access token found %s", body)
+		logger.Printf("  redeem got error %s", err)
 	}
 	return
 }

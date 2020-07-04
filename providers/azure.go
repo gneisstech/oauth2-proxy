@@ -169,6 +169,10 @@ func (p *AzureProvider) GetEmailAddress(ctx context.Context, s *sessions.Session
 	if s.AccessToken == "" {
 		return "", errors.New("missing access token")
 	}
+	if p.ProtectedResource != nil && p.ProtectedResource.String() != "" {
+		// profile URL and hence email is not implemented when a specific protected resource is requested
+		return "protected+resource@example.com", errors.New("not implemented")
+	}
 	req, err := http.NewRequestWithContext(ctx, "GET", p.ProfileURL.String(), nil)
 	if err != nil {
 		return "", err
