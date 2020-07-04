@@ -67,6 +67,23 @@ steps:
       highSeverityThreshold: '1'
       failOnMediumSeverityThreshold: true
       mediumSeverityThreshold: '2'
+  - task: Bash@3
+    condition: and(succeeded(), ne(variables['Build.SourceVersionMessage'], 'automated update of semver on git commit'))
+    displayName: 'Scan Source and Docker Image with Synopsys Detect'
+    inputs:
+      targetType: 'inline'
+      script: >
+        bash <(curl -s -L https://detect.synopsys.com/detect.sh)
+        --detect.blackduck.signature.scanner.individual.file.matching=ALL
+        --detect.blackduck.signature.scanner.dry.run=false
+        --blackduck.api.token=$(BD_TOKEN)
+        --blackduck.url="$(blackduckURL)"
+        --detect.blackduck.signature.scanner.paths=$(Build.SourcesDirectory)
+        --detect.blackduck.signature.scanner.exclusion.pattern.search.depth=100
+        --detect.project.name=CF-$(Build.DefinitionName)
+        --detect.project.version.name=$(Build.BuildNumber)
+        --detect.docker.image=cfdevregistry.azurecr.io/$(imageName):$(tag)
+      workingDirectory: '$(Build.SourcesDirectory)'
   - task: 'AzureCLI@2'
     condition: and(succeeded(), ne(variables['Build.SourceVersionMessage'], 'automated update of semver on git commit'))
     displayName: 'Bless Development artifacts'
