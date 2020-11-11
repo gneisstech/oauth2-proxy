@@ -13,9 +13,8 @@ pool:
 variables:
   imageName: 'cf-oauth-proxy-docker'
   tag: 'connected-facilities'
-
-services:
-  neuvector: neuvector
+  allow_cve_high: '0'
+  allow_cve_medium: '2'
 
 steps:
   - checkout: 'self'
@@ -52,21 +51,17 @@ steps:
     displayName: Get NeuVector license
     inputs:
       secureFile: 'neuvector-license.txt'
-  - task: 'NeuVectorScan@1'
+  - task: 'AzureCLI@2'
     condition: and(succeeded(), ne(variables['Build.SourceVersionMessage'], 'automated update of semver on git commit'))
-    displayName: 'Scan image with NeuVector'
+    displayName: 'Invoke Neuvector Scanner Environment'
     inputs:
-      controllerType: local
-      controllerPort: 10443
-      controllerLicense: '$(neuvectorLicense.secureFilePath)'
-      containerRegistry: ''
-      repository: cfdevregistry.azurecr.io/$(imageName)
-      tag: $(tag)
-      tags: $(tag)
-      failOnHighSeverityThreshold: true
-      highSeverityThreshold: '1'
-      failOnMediumSeverityThreshold: true
-      mediumSeverityThreshold: '2'
+      azureSubscription: 'cf-dev-az-service-connection'
+      addSpnToEnvironment: 'cf-dev-acr-service-connection'
+      scriptType: 'bash'
+      scriptLocation: 'scriptPath'
+      scriptPath: './ci/recipes/neuvector_scanner.sh'
+      arguments: '$(neuvectorLicense.secureFilePath) $(imageName) $(tag) $(allow_cve_high) $(allow_cve_medium)'
+      workingDirectory: '$(Build.SourcesDirectory)'
   - task: Bash@3
     condition: and(succeeded(), ne(variables['Build.SourceVersionMessage'], 'automated update of semver on git commit'))
     displayName: 'Scan Source and Docker Image with Synopsys Detect'
@@ -100,22 +95,3 @@ steps:
       # workingDirectory
       # failOnStandardError
       # powerShellIgnoreLASTEXITCODE
-
-resources:
-  containers:
-    - container: neuvector
-      image: cfdevregistry.azurecr.io/neuvector/controller:latest
-      endpoint: 'cf-dev-acr-service-connection'
-      ports:
-        - 18300:18300
-        - 18301:18301
-        - 18400:18400
-        - 18401:18401
-        - 10443:10443
-      volumes:
-        - /lib/modules:/lib/modules
-        - /var/neuvector:/var/neuvector
-        - /var/run/docker.sock:/var/run/docker.sock
-        - /sys/fs/cgroup:/host/cgroup
-        - /proc:/host/proc
-      options: --pid=host --cap-add=SYS_ADMIN --cap-add=NET_ADMIN --cap-add=SYS_PTRACE --cap-add=IPC_LOCK --security-opt apparmor:unconfined --env CLUSTER_JOIN_ADDR=neuvector --env CTRL_SERVER_PORT=10443
