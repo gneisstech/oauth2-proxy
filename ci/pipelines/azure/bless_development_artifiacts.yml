@@ -4,15 +4,15 @@
 # https://aka.ms/yaml
 
 trigger:
-  - 'master-bytelight'
+  - 'master-bedrock'
   - 'azure-pipelines'
 
 pool:
   vmImage: 'ubuntu-latest'
 
 variables:
-  imageName: 'cf-oauth-proxy-docker'
-  tag: 'connected-facilities'
+  imageName: 'br-oauth-proxy-docker'
+  tag: 'bedrock'
   allow_cve_high: '0'
   allow_cve_medium: '2'
 
@@ -31,7 +31,7 @@ steps:
       scriptPath: './ci/recipes/sast.sh'
   - task: 'Docker@2'
     condition: and(succeeded(), ne(variables['Build.SourceVersionMessage'], 'automated update of semver on git commit'))
-    displayName: 'Build and push cf-oauth-proxy-docker docker container'
+    displayName: 'Build and push br-oauth-proxy-docker docker container'
     inputs:
       repository: '$(imageName)'
       command: 'buildAndPush'

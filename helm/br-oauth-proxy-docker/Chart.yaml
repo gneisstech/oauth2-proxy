@@ -1,9 +1,9 @@
 apiVersion: v2
-name: cf-oauth-proxy-docker
+name: br-oauth-proxy-docker
 description: 'CF: AUTHN - OAuth2 proxy services'
 keywords:
-  - 'connected-facilities'
-  - 'cf-oauth-proxy-backend'
+  - 'bedrock'
+  - 'br-oauth-proxy-backend'
 type: application
 home: ''  # The URL of this projects home page (optional)
 sources: []  # A list of URLs to source code for this project (optional)

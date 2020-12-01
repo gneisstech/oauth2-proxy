@@ -3,12 +3,12 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   labels:
-    app: {{ template "cf-oauth-proxy-docker.name" . }}
-    chart: {{ template "cf-oauth-proxy-docker.chart" . }}
-    component: "{{ template "cf-oauth-proxy-docker.name" . }}"
+    app: {{ template "br-oauth-proxy-docker.name" . }}
+    chart: {{ template "br-oauth-proxy-docker.chart" . }}
+    component: "{{ template "br-oauth-proxy-docker.name" . }}"
     heritage: {{ .Release.Service }}
     release: {{ .Release.Name }}
-  name: {{ template "cf-oauth-proxy-docker.fullname" . }}-env
+  name: {{ template "br-oauth-proxy-docker.fullname" . }}-env
   annotations:
     checksum/environment: {{ tpl (toYaml .Values.config.environment) . | sha256sum }}
 data:

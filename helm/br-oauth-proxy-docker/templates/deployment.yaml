@@ -1,18 +1,18 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ include "cf-oauth-proxy-docker.fullname" . }}
+  name: {{ include "br-oauth-proxy-docker.fullname" . }}
   labels:
-    {{- include "cf-oauth-proxy-docker.labels" . | nindent 4 }}
+    {{- include "br-oauth-proxy-docker.labels" . | nindent 4 }}
 spec:
   replicas: {{ .Values.replicaCount }}
   selector:
     matchLabels:
-      {{- include "cf-oauth-proxy-docker.selectorLabels" . | nindent 6 }}
+      {{- include "br-oauth-proxy-docker.selectorLabels" . | nindent 6 }}
   template:
     metadata:
       labels:
-        {{- include "cf-oauth-proxy-docker.selectorLabels" . | nindent 8 }}
+        {{- include "br-oauth-proxy-docker.selectorLabels" . | nindent 8 }}
       {{- if ( or .Values.config.environment .Values.config.secrets ) }}
       annotations:
         {{- if .Values.config.environment }}
@@ -27,7 +27,7 @@ spec:
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
     {{- end }}
-      serviceAccountName: {{ include "cf-oauth-proxy-docker.serviceAccountName" . }}
+      serviceAccountName: {{ include "br-oauth-proxy-docker.serviceAccountName" . }}
       securityContext:
         {{- toYaml .Values.podSecurityContext | nindent 8 }}
       containers:
@@ -45,9 +45,9 @@ spec:
               value: "8125"
           envFrom:
             - configMapRef:
-                name: '{{ template "cf-oauth-proxy-docker.fullname" . }}-env'
+                name: '{{ template "br-oauth-proxy-docker.fullname" . }}-env'
             - secretRef:
-                name: '{{ template "cf-oauth-proxy-docker.fullname" . }}-senv'
+                name: '{{ template "br-oauth-proxy-docker.fullname" . }}-senv'
           ports:
             - name: http
               containerPort: {{ .Values.config.container.port }}

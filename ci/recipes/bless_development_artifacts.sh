@@ -18,8 +18,10 @@ declare -rx RELEASE_PREFIX="${RELEASE_PREFIX:-r}"
 declare -rx DEFAULT_SEMVER="${DEFAULT_SEMVER:-0.0.0}"
 declare -rx BUMP_SEMVER="${BUMP_SEMVER:-true}"
 declare -rx BUILD_REPOSITORY_LOCALPATH="${BUILD_REPOSITORY_LOCALPATH:-.}"
-declare -rx IMAGENAME="${IMAGENAME:-cf-oauth-proxy-docker}"
-declare -rx TAG="${TAG:-connected-facilities}"
+declare -rx IMAGENAME="${IMAGENAME:-br-oauth-proxy-docker}"
+declare -rx TAG="${TAG:-bedrock}"
+declare -rx TF_BUILD="${TF_BUILD:-}"
+declare -rx BUILD_SOURCEBRANCHNAME="${BUILD_SOURCEBRANCHNAME:-}"
 
 # Arguments
 # ---------------------
