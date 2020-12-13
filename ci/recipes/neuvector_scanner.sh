@@ -65,12 +65,12 @@ function neuvector_scanner () {
     docker run \
       --name neuvector.scanner \
       --rm \
-      -e SCANNER_REPOSITORY="cfdevregistry.azurecr.io/${imageName}" \
+      -e SCANNER_REPOSITORY="brdevregistry.azurecr.io/${imageName}" \
       -e SCANNER_TAG="${tag}" \
       -e SCANNER_LICENSE="$(cat "${licenseKeyPath}")" \
       -v /var/run/docker.sock:/var/run/docker.sock \
       -v "$(pwd)":/var/neuvector \
-      'cfdevregistry.azurecr.io/neuvector/scanner:latest'
+      'brdevregistry.azurecr.io/neuvector/scanner:latest'
     printf "======== High priority CVE ========\n"
     show_cve_high 'scan_result.json'
     printf "======== Medium priority CVE ========\n"

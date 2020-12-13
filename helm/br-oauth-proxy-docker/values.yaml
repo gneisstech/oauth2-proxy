@@ -5,7 +5,7 @@
 replicaCount: 1
 
 image:
-  repository: 'cfdevregistry.azurecr.io/br-oauth-proxy-docker'
+  repository: 'brdevregistry.azurecr.io/br-oauth-proxy-docker'
   pullPolicy: IfNotPresent
 
 imagePullSecrets: []

@@ -25,7 +25,7 @@ steps:
     condition: and(succeeded(), ne(variables['Build.SourceVersionMessage'], 'automated update of semver on git commit'))
     displayName: 'Static Analysis of Software'
     inputs:
-      azureSubscription: 'cf-dev-az-service-connection'
+      azureSubscription: 'br-dev-az-service-connection'
       scriptType: 'bash'
       scriptLocation: 'scriptPath'
       scriptPath: './ci/recipes/sast.sh'
@@ -36,7 +36,7 @@ steps:
       repository: '$(imageName)'
       command: 'buildAndPush'
       Dockerfile: 'Dockerfile'
-      containerRegistry: 'cf-dev-acr-service-connection'
+      containerRegistry: 'br-dev-acr-service-connection'
       tags: |
         $(tag)
   - task: 'Docker@2'
@@ -44,7 +44,7 @@ steps:
     displayName: 'Login to ACR for Dev registry'
     inputs:
       command: 'login'
-      containerRegistry: 'cf-dev-acr-service-connection'
+      containerRegistry: 'br-dev-acr-service-connection'
   - task: 'DownloadSecureFile@1'
     condition: and(succeeded(), ne(variables['Build.SourceVersionMessage'], 'automated update of semver on git commit'))
     name: neuvectorLicense
@@ -52,18 +52,18 @@ steps:
     inputs:
       secureFile: 'neuvector-license.txt'
   - task: 'AzureCLI@2'
-    condition: and(succeeded(), ne(variables['Build.SourceVersionMessage'], 'automated update of semver on git commit'))
+    condition: and(false, succeeded(), ne(variables['Build.SourceVersionMessage'], 'automated update of semver on git commit'))
     displayName: 'Invoke Neuvector Scanner Environment'
     inputs:
-      azureSubscription: 'cf-dev-az-service-connection'
-      addSpnToEnvironment: 'cf-dev-acr-service-connection'
+      azureSubscription: 'br-dev-az-service-connection'
+      addSpnToEnvironment: 'br-dev-acr-service-connection'
       scriptType: 'bash'
       scriptLocation: 'scriptPath'
       scriptPath: './ci/recipes/neuvector_scanner.sh'
       arguments: '$(neuvectorLicense.secureFilePath) $(imageName) $(tag) $(allow_cve_high) $(allow_cve_medium)'
       workingDirectory: '$(Build.SourcesDirectory)'
   - task: Bash@3
-    condition: and(succeeded(), ne(variables['Build.SourceVersionMessage'], 'automated update of semver on git commit'))
+    condition: and(false, succeeded(), ne(variables['Build.SourceVersionMessage'], 'automated update of semver on git commit'))
     displayName: 'Scan Source and Docker Image with Synopsys Detect'
     inputs:
       targetType: 'inline'
@@ -75,15 +75,15 @@ steps:
         --blackduck.url="$(blackduckURL)"
         --detect.blackduck.signature.scanner.paths=$(Build.SourcesDirectory)
         --detect.blackduck.signature.scanner.exclusion.pattern.search.depth=100
-        --detect.project.name=CF-$(Build.DefinitionName)
+        --detect.project.name=BR-$(Build.DefinitionName)
         --detect.project.version.name=$(Build.BuildNumber)
-        --detect.docker.image=cfdevregistry.azurecr.io/$(imageName):$(tag)
+        --detect.docker.image=brdevregistry.azurecr.io/$(imageName):$(tag)
       workingDirectory: '$(Build.SourcesDirectory)'
   - task: 'AzureCLI@2'
     condition: and(succeeded(), ne(variables['Build.SourceVersionMessage'], 'automated update of semver on git commit'))
     displayName: 'Bless Development artifacts'
     inputs:
-      azureSubscription: 'cf-dev-az-service-connection'
+      azureSubscription: 'br-dev-az-service-connection'
       scriptType: 'bash'
       scriptLocation: 'scriptPath'
       scriptPath: './ci/recipes/bless_development_artifacts.sh'
